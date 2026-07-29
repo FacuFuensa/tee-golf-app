@@ -1,18 +1,22 @@
 import Constants from "expo-constants";
 import { useRouter } from "expo-router";
-import { Briefcase, ChevronRight, LogOut, Ruler, Trash2, User as UserIcon } from "lucide-react-native";
+import * as WebBrowser from "expo-web-browser";
+import { Briefcase, ChevronRight, LifeBuoy, Lock, LogOut, Mail, Ruler, Trash2, User as UserIcon } from "lucide-react-native";
 import React, { useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Wordmark } from "@/components/Wordmark";
 import { TeeButton } from "@/components/ui/TeeButton";
 import { TeeCard } from "@/components/ui/TeeCard";
 import { SegmentedControl } from "@/components/ui/SegmentedControl";
+import { Links } from "@/constants/links";
 import { Colors, Radius, Spacing, Typography, hairline } from "@/constants/theme";
 import { useClubs } from "@/hooks/useClubs";
 import { useAuth } from "@/providers/AuthProvider";
+import { useBlockedPlayers } from "@/providers/BlockedPlayersProvider";
 import { useSettings } from "@/providers/SettingsProvider";
+import { tapLight } from "@/utils/haptics";
 import type { DistanceUnit } from "@/utils/geo";
 
 const UNIT_OPTIONS: { label: string; value: DistanceUnit }[] = [
@@ -25,6 +29,7 @@ export default function SettingsScreen() {
   const router = useRouter();
   const { unit, setUnit } = useSettings();
   const { profile, user, signOut, clearMyData, deleteAccount } = useAuth();
+  const { blocked, unblockPlayer } = useBlockedPlayers();
   const { clubs } = useClubs();
   const [clearing, setClearing] = useState<boolean>(false);
   const [deleting, setDeleting] = useState<boolean>(false);
@@ -120,6 +125,70 @@ export default function SettingsScreen() {
         Applied everywhere — including the live distance to the green.
       </Text>
 
+      {blocked.length > 0 ? (
+        <>
+          <SectionLabel icon={<UserIcon size={14} color={Colors.textTertiary} strokeWidth={2.4} />}>
+            Blocked players
+          </SectionLabel>
+          <TeeCard padded={false} style={styles.card}>
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>
+                {blocked.length} {blocked.length === 1 ? "player" : "players"} hidden
+              </Text>
+            </View>
+            <Divider />
+            <LinkRow
+              icon={<UserIcon size={18} color={Colors.textSecondary} strokeWidth={2.2} />}
+              label="Unblock everyone"
+              onPress={() => {
+                Alert.alert(
+                  "Unblock everyone?",
+                  "You'll start seeing these players on leaderboards again.",
+                  [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Unblock all",
+                      onPress: () => blocked.forEach((id) => unblockPlayer(id)),
+                    },
+                  ]
+                );
+              }}
+            />
+          </TeeCard>
+        </>
+      ) : null}
+
+      <SectionLabel icon={<LifeBuoy size={14} color={Colors.textTertiary} strokeWidth={2.4} />}>
+        Help &amp; legal
+      </SectionLabel>
+      <TeeCard padded={false} style={styles.card}>
+        <LinkRow
+          icon={<LifeBuoy size={18} color={Colors.textSecondary} strokeWidth={2.2} />}
+          label="Help &amp; FAQ"
+          onPress={() => openLink(Links.support)}
+        />
+        <Divider />
+        <LinkRow
+          icon={<Mail size={18} color={Colors.textSecondary} strokeWidth={2.2} />}
+          label="Contact support"
+          onPress={() => {
+            tapLight();
+            Linking.openURL(`mailto:${Links.supportEmail}?subject=Tee%20support`).catch(() => {
+              Alert.alert(
+                "Couldn't open Mail",
+                `Write to us at ${Links.supportEmail} and we'll get back to you.`
+              );
+            });
+          }}
+        />
+        <Divider />
+        <LinkRow
+          icon={<Lock size={18} color={Colors.textSecondary} strokeWidth={2.2} />}
+          label="Privacy Policy"
+          onPress={() => openLink(Links.privacyPolicy)}
+        />
+      </TeeCard>
+
       <View style={styles.about}>
         <Wordmark size={18} tint={Colors.textTertiary} />
         <Text style={styles.version}>Version {version}</Text>
@@ -148,6 +217,41 @@ export default function SettingsScreen() {
         />
       </View>
     </ScrollView>
+  );
+}
+
+/** Opens a page in an in-app browser, falling back to Safari if that fails. */
+async function openLink(url: string): Promise<void> {
+  tapLight();
+  try {
+    await WebBrowser.openBrowserAsync(url);
+  } catch {
+    Linking.openURL(url).catch(() => {
+      Alert.alert("Couldn't open the page", url);
+    });
+  }
+}
+
+function LinkRow({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      style={styles.linkRow}
+      onPress={onPress}
+      accessibilityRole="link"
+      accessibilityLabel={label}
+    >
+      {icon}
+      <Text style={styles.linkLabel}>{label}</Text>
+      <ChevronRight size={18} color={Colors.textTertiary} strokeWidth={2.4} />
+    </Pressable>
   );
 }
 
@@ -212,6 +316,14 @@ const styles = StyleSheet.create({
   },
   rowLabel: { ...Typography.body, color: Colors.textSecondary },
   rowValue: { ...Typography.callout, flexShrink: 1, textAlign: "right" },
+  linkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+    paddingVertical: Spacing.lg,
+    minHeight: 48,
+  },
+  linkLabel: { ...Typography.body, flex: 1 },
   divider: { height: 1, backgroundColor: Colors.border },
   hint: { ...Typography.subhead, color: Colors.textTertiary, marginTop: Spacing.md, marginLeft: 2 },
   about: { alignItems: "center", marginTop: Spacing.xxxl, gap: 8 },

@@ -43,3 +43,14 @@ yarn-error.*
 core
 node_modules
 .expo
+
+# App Review demo credentials. This repository is public, and a published
+# password would let anyone sign in as the reviewer account and wipe its seeded
+# data — possibly mid-review.
+store/.demo-credentials
+
+# NOTE: package-lock.json is deliberately NOT ignored. This project is built
+# with npm, and EAS infers the package manager from whichever lock file it
+# finds. `bun.lock` is stale — it still lists @rork-ai/toolkit-sdk and the other
+# dependencies removed for the App Store build — so it must be deleted from the
+# repo (`git rm bun.lock`) or a cloud build will reinstall them.

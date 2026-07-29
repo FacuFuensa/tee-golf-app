@@ -14,6 +14,7 @@ import { TeeButton } from "@/components/ui/TeeButton";
 import { TeeTextField } from "@/components/ui/TeeTextField";
 import { Colors, Spacing, Typography } from "@/constants/theme";
 import { useAuth } from "@/providers/AuthProvider";
+import { checkDisplayName } from "@/utils/moderation";
 
 export default function OnboardingScreen() {
   const insets = useSafeAreaInsets();
@@ -37,6 +38,15 @@ export default function OnboardingScreen() {
 
   const submit = async (): Promise<void> => {
     if (!valid || loading) return;
+
+    // This name is shown to the other golfers in any group round, so it is
+    // user-generated content and has to pass the same filter as a course name.
+    const check = checkDisplayName(displayName);
+    if (!check.ok) {
+      setError(check.reason);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     const { error: saveError } = await saveProfile(displayName);
@@ -59,7 +69,8 @@ export default function OnboardingScreen() {
             <Text style={styles.overline}>Welcome to Tee</Text>
             <Text style={styles.title}>What should we{"\n"}call you?</Text>
             <Text style={styles.subtitle}>
-              This name appears on your scorecards.
+              This name appears on your scorecards, and to the other golfers in any group
+              round you play.
             </Text>
           </View>
 
@@ -67,7 +78,10 @@ export default function OnboardingScreen() {
             <TeeTextField
               label="Display name"
               value={displayName}
-              onChangeText={setDisplayName}
+              onChangeText={(text) => {
+                setDisplayName(text);
+                if (error) setError(null);
+              }}
               placeholder="e.g. Alex Morgan"
               autoCapitalize="words"
               autoFocus

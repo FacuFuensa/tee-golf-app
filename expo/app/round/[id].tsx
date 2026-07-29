@@ -21,11 +21,13 @@ import { SatelliteMap } from "@/components/SatelliteMap";
 import type { MapRegion } from "@/components/SatelliteMap.types";
 import { TeeButton } from "@/components/ui/TeeButton";
 import { Stepper } from "@/components/ui/Stepper";
+import { Links, reportMailto } from "@/constants/links";
 import { Colors, Fonts, Radius, Spacing, Typography, hairline } from "@/constants/theme";
 import { useClubs } from "@/hooks/useClubs";
 import { useLiveLocation } from "@/hooks/useLiveLocation";
 import { useActiveRound } from "@/providers/ActiveRoundProvider";
 import { useAuth } from "@/providers/AuthProvider";
+import { useBlockedPlayers } from "@/providers/BlockedPlayersProvider";
 import { useSettings } from "@/providers/SettingsProvider";
 import {
   fetchLeaderboard,
@@ -44,6 +46,13 @@ import type { PlaysLikeBreakdown } from "@/utils/caddy";
 import { formatDistance, haversineMeters, metersToUnit, unitLabel, unitShort } from "@/utils/geo";
 import { notifySuccess, tapLight } from "@/utils/haptics";
 
+/**
+ * Beyond this distance from the green we stop showing a yardage. 1.5 km is
+ * comfortably past the longest hole ever played but well short of "you are in
+ * another city", so it only ever triggers when the golfer genuinely isn't there.
+ */
+const OFF_COURSE_METERS = 1500;
+
 export default function PlayRoundScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -51,6 +60,7 @@ export default function PlayRoundScreen() {
   const { user } = useAuth();
   const { unit } = useSettings();
   const { activeRound, saveActiveRound, clearActiveRound } = useActiveRound();
+  const { blockPlayer, isBlocked } = useBlockedPlayers();
   const { clubs } = useClubs();
   const queryClient = useQueryClient();
 
@@ -96,6 +106,9 @@ export default function PlayRoundScreen() {
 
   const isMultiplayer = bundle?.round.is_multiplayer ?? false;
   const [showBoard, setShowBoard] = useState<boolean>(false);
+  // True when a live multiplayer score write failed and the leaderboard is
+  // therefore behind what the golfer sees on their own stepper.
+  const [syncFailed, setSyncFailed] = useState<boolean>(false);
 
   const leaderboardQuery = useQuery({
     queryKey: ["leaderboard", roundId],
@@ -103,7 +116,12 @@ export default function PlayRoundScreen() {
     enabled: roundId.length > 0 && isMultiplayer,
     refetchInterval: isMultiplayer ? 4000 : false,
   });
-  const players = leaderboardQuery.data ?? [];
+  // Blocking is applied on read, so a blocked player disappears from the board
+  // immediately rather than only after the round ends.
+  const players = useMemo<LeaderboardEntry[]>(
+    () => (leaderboardQuery.data ?? []).filter((p) => !isBlocked(p.profileId)),
+    [leaderboardQuery.data, isBlocked]
+  );
 
   // Seed local scores when the round loads. A paused round (resumed from the
   // "in progress" banner) restores its local scores and hole; otherwise we
@@ -141,12 +159,17 @@ export default function PlayRoundScreen() {
       });
     },
     onSuccess: () => {
+      setSyncFailed(false);
       if (isMultiplayer) {
         queryClient.invalidateQueries({ queryKey: ["leaderboard", roundId] });
       }
     },
     onError: (error) => {
+      // In a group round the leaderboard is the whole point, so a dropped write
+      // has to be visible — it used to only reach console.error while the
+      // stepper happily showed a score the server never received.
       console.error("[round] couldn't save score:", error);
+      setSyncFailed(true);
     },
   });
 
@@ -202,6 +225,12 @@ export default function PlayRoundScreen() {
           currentHole.green_lng as number
         )
       : null;
+
+  // Past this, the golfer plainly isn't on the hole — they're reviewing a
+  // scorecard from home, or the green was pinned on the wrong course. Showing a
+  // raw six-digit yardage in the hero slot reads as a broken app, so we swap in
+  // an explicit off-course state instead.
+  const offCourse = distanceMeters != null && distanceMeters > OFF_COURSE_METERS;
 
   // Plays-like distance: converts the raw GPS distance into what the shot really
   // plays given temperature + wind along the shot line.
@@ -467,6 +496,8 @@ export default function PlayRoundScreen() {
         <DistanceDisplay
           status={location.status}
           distanceMeters={distanceMeters}
+          offCourse={offCourse}
+          courseName={bundle.course.name}
           unit={unit}
           pop={pop}
           hasGreen={hasGreen}
@@ -477,7 +508,7 @@ export default function PlayRoundScreen() {
           onEnable={() => Linking.openSettings()}
           onRetry={location.retry}
         />
-        {hasGreen && distanceMeters != null && playsLike && (clubs.length > 0 || playsLike.hasWeather) ? (
+        {hasGreen && !offCourse && distanceMeters != null && playsLike && (clubs.length > 0 || playsLike.hasWeather) ? (
           <CaddyBlock
             breakdown={playsLike}
             weather={weather}
@@ -525,6 +556,22 @@ export default function PlayRoundScreen() {
           <ScoreTag strokes={strokes} par={currentHole?.par ?? 0} />
         </View>
         <Stepper value={strokes} onChange={setStrokes} min={0} max={20} />
+        {isMultiplayer && syncFailed ? (
+          <Pressable
+            style={styles.syncBanner}
+            onPress={() => {
+              if (!currentHole) return;
+              tapLight();
+              saveScore.mutate({ holeId: currentHole.id, strokes });
+            }}
+            accessibilityRole="button"
+            accessibilityLabel="Retry sending your score to the group"
+          >
+            <Text style={styles.syncBannerText}>
+              Score not sent to the group — tap to retry
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
 
       {/* Scorecard strip */}
@@ -563,9 +610,18 @@ export default function PlayRoundScreen() {
           visible={showBoard}
           joinCode={bundle.round.join_code}
           courseName={bundle.course.name}
+          roundId={roundId}
           players={players}
           currentUserId={user?.id ?? null}
           loading={leaderboardQuery.isLoading}
+          onBlock={(profileId, name) => {
+            blockPlayer(profileId);
+            notifySuccess();
+            Alert.alert(
+              "Player blocked",
+              `You won't see ${name} on any leaderboard. You can undo this in Settings.`
+            );
+          }}
           onClose={() => setShowBoard(false)}
         />
       ) : null}
@@ -678,20 +734,57 @@ function LeaderboardModal({
   visible,
   joinCode,
   courseName,
+  roundId,
   players,
   currentUserId,
   loading,
+  onBlock,
   onClose,
 }: {
   visible: boolean;
   joinCode: string | null;
   courseName: string;
+  roundId: string;
   players: LeaderboardEntry[];
   currentUserId: string | null;
   loading: boolean;
+  onBlock: (profileId: string, name: string) => void;
   onClose: () => void;
 }) {
   const insets = useSafeAreaInsets();
+
+  /**
+   * Guideline 1.2 requires both a way to report objectionable content and a way
+   * to block the person behind it. A display name is the only thing another
+   * golfer authors here, so both actions hang off the player's row.
+   */
+  const onModeratePlayer = (player: LeaderboardEntry): void => {
+    tapLight();
+    Alert.alert(
+      player.name,
+      "This player chose their own display name. If it's offensive you can report it to us, or block them so you stop seeing it.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Report player",
+          onPress: () => {
+            const url = reportMailto({ reportedName: player.name, roundId });
+            Linking.openURL(url).catch(() => {
+              Alert.alert(
+                "Couldn't open Mail",
+                `Email ${Links.supportEmail} with the player's name and we'll review it.`
+              );
+            });
+          },
+        },
+        {
+          text: "Block player",
+          style: "destructive",
+          onPress: () => onBlock(player.profileId, player.name),
+        },
+      ]
+    );
+  };
 
   const shareCode = (): void => {
     if (!joinCode) return;
@@ -738,7 +831,16 @@ function LeaderboardModal({
             {players.map((p, idx) => {
               const isMe = p.profileId === currentUserId;
               return (
-                <View key={p.profileId} style={[styles.boardRow, isMe && styles.boardRowMe]}>
+                <Pressable
+                  key={p.profileId}
+                  style={[styles.boardRow, isMe && styles.boardRowMe]}
+                  onLongPress={isMe ? undefined : () => onModeratePlayer(p)}
+                  onPress={isMe ? undefined : () => onModeratePlayer(p)}
+                  accessibilityRole={isMe ? undefined : "button"}
+                  accessibilityLabel={
+                    isMe ? undefined : `${p.name}. Double tap to report or block this player.`
+                  }
+                >
                   <Text style={styles.boardRank}>{p.thru > 0 ? idx + 1 : "–"}</Text>
                   <View style={styles.boardNameWrap}>
                     <Text style={styles.boardName} numberOfLines={1}>
@@ -758,12 +860,14 @@ function LeaderboardModal({
                   >
                     {p.thru > 0 ? formatToPar(p.toPar) : "–"}
                   </Text>
-                </View>
+                </Pressable>
               );
             })}
           </View>
         )}
-        <Text style={styles.boardHint}>Scores update live as everyone plays.</Text>
+        <Text style={styles.boardHint}>
+          Scores update live as everyone plays. Tap a player to report or block them.
+        </Text>
       </View>
     </Modal>
   );
@@ -860,6 +964,8 @@ function GreenPicker({
 function DistanceDisplay({
   status,
   distanceMeters,
+  offCourse,
+  courseName,
   unit,
   pop,
   hasGreen,
@@ -872,6 +978,8 @@ function DistanceDisplay({
 }: {
   status: ReturnType<typeof useLiveLocation>["status"];
   distanceMeters: number | null;
+  offCourse: boolean;
+  courseName: string;
   unit: "yards" | "meters";
   pop: Animated.Value;
   hasGreen: boolean;
@@ -956,6 +1064,21 @@ function DistanceDisplay({
       <View style={styles.stateBlock}>
         <ActivityIndicator color={Colors.accent} />
         <Text style={styles.searching}>Searching for GPS…</Text>
+      </View>
+    );
+  }
+
+  if (offCourse) {
+    return (
+      <View style={styles.stateBlock}>
+        <View style={styles.greenIcon}>
+          <MapPin size={24} color={Colors.accent} strokeWidth={2.2} />
+        </View>
+        <Text style={styles.stateTitle}>You&apos;re not at this course</Text>
+        <Text style={styles.stateBody}>
+          Live distance appears once you&apos;re on {courseName}. You can still keep score and
+          review the card from here.
+        </Text>
       </View>
     );
   }
@@ -1571,6 +1694,15 @@ const styles = StyleSheet.create({
   bottomHint: { flexDirection: "row", alignItems: "center", gap: 8 },
   bottomHintText: { ...Typography.subhead, color: Colors.textSecondary, flex: 1, lineHeight: 18 },
 
+  syncBanner: {
+    marginTop: Spacing.md,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.dangerSoft,
+    alignItems: "center",
+  },
+  syncBannerText: { ...Typography.subhead, color: Colors.danger, fontWeight: "600" },
   scoreBlock: {
     marginHorizontal: Spacing.xl,
     backgroundColor: Colors.surface,

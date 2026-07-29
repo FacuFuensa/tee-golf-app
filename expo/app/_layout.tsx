@@ -15,7 +15,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { Colors } from "@/constants/theme";
 import { ActiveRoundProvider } from "@/providers/ActiveRoundProvider";
 import { AuthProvider, useAuth } from "@/providers/AuthProvider";
-import { HiddenCoursesProvider } from "@/providers/HiddenCoursesProvider";
+import { BlockedPlayersProvider } from "@/providers/BlockedPlayersProvider";
 import { SettingsProvider } from "@/providers/SettingsProvider";
 
 SplashScreen.preventAutoHideAsync();
@@ -101,11 +101,11 @@ export default function RootLayout() {
       <GestureHandlerRootView style={styles.flex}>
         <SettingsProvider>
           <AuthProvider>
-            <HiddenCoursesProvider>
+            <BlockedPlayersProvider>
               <ActiveRoundProvider>
                 <Gate />
               </ActiveRoundProvider>
-            </HiddenCoursesProvider>
+            </BlockedPlayersProvider>
           </AuthProvider>
         </SettingsProvider>
       </GestureHandlerRootView>

@@ -20,9 +20,13 @@ export async function createProfile(
   userId: string,
   displayName: string
 ): Promise<Profile> {
+  // Upsert, not insert: if the profile already exists (a transient network
+  // failure on the first load can send an existing golfer back through
+  // onboarding), a plain insert raises a raw `profiles_pkey` violation that
+  // used to be printed verbatim on screen.
   const { data, error } = await supabase
     .from("profiles")
-    .insert({ id: userId, display_name: displayName })
+    .upsert({ id: userId, display_name: displayName }, { onConflict: "id" })
     .select()
     .single();
   if (error) throw error;

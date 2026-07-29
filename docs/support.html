@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support — Tee</title>
+<style>
+  :root {
+    --bg: #F2EDE3;
+    --surface: #FFFFFF;
+    --primary: #1C3A2B;
+    --accent: #4E8C6A;
+    --text: #1C3A2B;
+    --muted: #6E7B71;
+    --border: rgba(28, 58, 43, 0.12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 20px 80px;
+    background: var(--bg); color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  header { padding: 56px 0 32px; border-bottom: 1px solid var(--border); margin-bottom: 40px; }
+  .brand { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); font-weight: 700; margin: 0 0 12px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; letter-spacing: -0.4px; }
+  .lede { color: var(--muted); font-size: 17px; margin: 0; }
+  h2 { font-size: 21px; margin: 44px 0 14px; letter-spacing: -0.2px; }
+  h3 { font-size: 17px; margin: 26px 0 6px; }
+  p, li { color: #2C4638; }
+  a { color: var(--accent); }
+  ul { padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  .contact {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    margin: 28px 0;
+    text-align: center;
+  }
+  .contact a.email {
+    display: inline-block;
+    margin-top: 10px;
+    font-size: 19px;
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .contact .meta { color: var(--muted); font-size: 14px; margin: 14px 0 0; }
+  details {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 18px;
+    margin-bottom: 10px;
+  }
+  summary { font-weight: 600; cursor: pointer; }
+  details p, details ul { margin-bottom: 0; }
+  code { background: rgba(28,58,43,0.06); padding: 2px 6px; border-radius: 5px; font-size: 14px; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101A14; --surface: #17231C; --text: #E8EFE9; --muted: #9BAAA0; --border: rgba(232,239,233,0.14); --accent: #7FBF9B; }
+    p, li { color: #D2DED6; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="brand">Tee</p>
+  <h1>Support</h1>
+  <p class="lede">Something not working, or a question about the app? Write to us — a real person reads it.</p>
+</header>
+
+<div class="contact">
+  <div>Email support</div>
+  <a class="email" href="mailto:ffuensalida@icloud.com">ffuensalida@icloud.com</a>
+  <p class="meta">We reply within a few days. Include your iPhone model and iOS version if you are reporting a bug.</p>
+</div>
+
+<h2>Common questions</h2>
+
+<details>
+  <summary>The distance to the green says "Green not mapped". What do I do?</summary>
+  <p>
+    Course scorecards give us pars and yardages, but not the GPS coordinates of each green — those
+    do not exist in any public database, so golfers map them.
+  </p>
+  <p>
+    Tap <strong>Pick green on map</strong>, drag the satellite map until the crosshair sits on the
+    middle of the green, and save. You can do this from your sofa before the round. If you are
+    already standing on the green, tap <strong>I'm on the green — use my GPS</strong> instead.
+  </p>
+  <p>Once a green is pinned it stays pinned, for you and for everyone else who plays that course.</p>
+</details>
+
+<details>
+  <summary>The distance readout seems off.</summary>
+  <p>
+    Two things to check. First, the green pin: if it was dropped on the edge of the green rather than
+    the middle, every reading will be off by the same amount. Tap the map preview on the play screen
+    to adjust it.
+  </p>
+  <p>
+    Second, GPS accuracy: phones are typically accurate to about 5 metres outdoors, worse near trees
+    or buildings. Give it a few seconds outside to settle before trusting the number.
+  </p>
+</details>
+
+<details>
+  <summary>What is the Smart Caddy actually doing?</summary>
+  <p>
+    It converts the raw GPS distance into a "plays like" distance using the current conditions, then
+    matches that to the closest club in your bag.
+  </p>
+  <ul>
+    <li><strong>Wind</strong> is split along your shot line. A headwind makes the shot play longer; a
+        tailwind helps, but less than a headwind hurts. Pure crosswind barely changes distance.</li>
+    <li><strong>Temperature</strong> matters because cold air is denser and the ball carries shorter,
+        so the shot plays longer.</li>
+  </ul>
+  <p>
+    It needs two things to be useful: clubs in your bag (<code>Settings → Your bag</code>) and a
+    mapped green. It is a nudge, not gospel — a caddy suggests, you decide.
+  </p>
+</details>
+
+<details>
+  <summary>How do group rounds work?</summary>
+  <p>
+    Tap a course, choose <strong>Host a group</strong>, and you get a six-character code. Everyone
+    else taps <strong>Join</strong> on the Courses tab and enters it. Scores sync live and everyone
+    sees the same leaderboard.
+  </p>
+  <p>
+    Players joining a group round do not need to have that course saved themselves.
+  </p>
+</details>
+
+<details>
+  <summary>I closed the app mid-round. Did I lose my scores?</summary>
+  <p>
+    No. Closing the play screen pauses the round rather than discarding it. A
+    <strong>Round in progress</strong> banner appears at the top of the Courses tab — tap
+    <strong>Resume</strong> to pick up on the same hole with the same scores.
+  </p>
+  <p>
+    Nothing is written to your history or statistics until you explicitly choose to save, so an
+    accidental tap never pollutes your stats.
+  </p>
+</details>
+
+<details>
+  <summary>Why does a course I added not show up for my friend?</summary>
+  <p>
+    Course libraries are per-golfer. Adding a course saves it to your list only. Your friend adds it
+    to theirs the same way, and both of you then share the same green pins.
+  </p>
+</details>
+
+<details>
+  <summary>Can I switch between yards and metres?</summary>
+  <p>
+    Yes — <code>Settings → Distance units</code>. It applies everywhere, including the big number on
+    the play screen and your club carries.
+  </p>
+</details>
+
+<details>
+  <summary>How do I delete my data or my account?</summary>
+  <p>
+    Both are in <code>Settings</code>, at the bottom. See the
+    <a href="./delete-account.html">account deletion page</a> for exactly what each one removes.
+  </p>
+</details>
+
+<h2>Reporting a problem with another golfer</h2>
+<p>
+  If someone in a group round is using an offensive display name, or you want to stop playing with
+  them, email <a href="mailto:ffuensalida@icloud.com">ffuensalida@icloud.com</a> with the round's
+  invite code and what you saw. We investigate every report and can remove a display name or an
+  account. You can also leave any group round immediately by closing it from the play screen.
+</p>
+
+<h2>Privacy</h2>
+<p>
+  Tee collects the minimum it needs to work, shows no ads and does not track you.
+  The full <a href="./privacy.html">privacy policy</a> spells out every piece of data, who receives
+  it, and how to erase it.
+</p>
+
+<footer>
+  <p>
+    <a href="./index.html">Tee</a> ·
+    <a href="./privacy.html">Privacy Policy</a> ·
+    <a href="./delete-account.html">Delete your account</a>
+  </p>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,19 +1,34 @@
-// template
-import { Link, Stack } from "expo-router";
+import { useRouter } from "expo-router";
+import { Flag } from "lucide-react-native";
+import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 
-export default function NotFoundScreen() {
-  return (
-    <>
-      <Stack.Screen options={{ title: "Oops!" }} />
-      <View style={styles.container}>
-        <Text style={styles.title}>This screen doesn&apos;t exist.</Text>
+import { TeeButton } from "@/components/ui/TeeButton";
+import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
 
-        <Link href="/" style={styles.link}>
-          <Text style={styles.linkText}>Go to home screen!</Text>
-        </Link>
+/**
+ * Shown when a deep link or a stale route points somewhere that no longer
+ * exists. Styled like the rest of the app so it reads as a considered state
+ * rather than a crash.
+ */
+export default function NotFoundScreen() {
+  const router = useRouter();
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.icon}>
+        <Flag size={26} color={Colors.accent} strokeWidth={2.2} />
       </View>
-    </>
+      <Text style={styles.title}>Nothing here</Text>
+      <Text style={styles.body}>
+        That link doesn&apos;t lead anywhere in Tee. It may be from an older version of the app.
+      </Text>
+      <TeeButton
+        label="Back to your courses"
+        onPress={() => router.replace("/(tabs)/courses")}
+        style={styles.cta}
+      />
+    </View>
   );
 }
 
@@ -22,18 +37,25 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: 20,
+    padding: Spacing.xl,
+    backgroundColor: Colors.background,
   },
-  title: {
-    fontSize: 20,
-    fontWeight: "bold",
+  icon: {
+    width: 60,
+    height: 60,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.accentSoft,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: Spacing.lg,
   },
-  link: {
-    marginTop: 15,
-    paddingVertical: 15,
+  title: { ...Typography.title, textAlign: "center" },
+  body: {
+    ...Typography.body,
+    color: Colors.textSecondary,
+    textAlign: "center",
+    marginTop: Spacing.sm,
+    maxWidth: 300,
   },
-  linkText: {
-    fontSize: 14,
-    color: "#2e78b7",
-  },
+  cta: { marginTop: Spacing.xl, alignSelf: "stretch", maxWidth: 320 },
 });

@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tee — Golf GPS &amp; Scorecard</title>
+<meta name="description" content="Tee tells you one thing, fast: how far you are from the green. Live GPS distance, scorecard, group rounds and stats for iPhone.">
+<style>
+  :root {
+    --bg: #F2EDE3; --surface: #FFFFFF; --primary: #1C3A2B; --accent: #4E8C6A;
+    --gold: #C7A24A; --text: #1C3A2B; --muted: #6E7B71; --border: rgba(28,58,43,0.12);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 20px 80px; background: var(--bg); color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  header { padding: 80px 0 48px; text-align: center; }
+  .mark {
+    width: 64px; height: 64px; margin: 0 auto 24px; border-radius: 20px;
+    background: var(--primary); display: flex; align-items: center; justify-content: center;
+  }
+  .mark span { color: #F4F0E7; font-size: 30px; font-weight: 700; letter-spacing: -1px; }
+  h1 { font-size: 44px; line-height: 1.1; margin: 0 0 14px; letter-spacing: -1px; }
+  .tagline { font-size: 20px; color: var(--muted); margin: 0; }
+  h2 { font-size: 22px; margin: 48px 0 16px; letter-spacing: -0.2px; }
+  p, li { color: #2C4638; }
+  a { color: var(--accent); }
+  .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); margin: 28px 0; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px;
+  }
+  .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .card p { margin: 0; font-size: 15px; color: var(--muted); }
+  .links { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin: 36px 0 0; }
+  .links a {
+    display: inline-block; padding: 12px 22px; border-radius: 999px;
+    background: var(--primary); color: #F4F0E7; text-decoration: none; font-weight: 600; font-size: 15px;
+  }
+  .links a.secondary { background: transparent; color: var(--primary); border: 1px solid var(--border); }
+  footer { margin-top: 72px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; text-align: center; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101A14; --surface: #17231C; --text: #E8EFE9; --muted: #9BAAA0; --border: rgba(232,239,233,0.14); --accent: #7FBF9B; --primary: #7FBF9B; }
+    p, li { color: #D2DED6; }
+    .mark { background: #1F3227; }
+    .links a { background: #7FBF9B; color: #0D1711; }
+    .links a.secondary { background: transparent; color: #E8EFE9; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="mark"><span>T</span></div>
+  <h1>Tee</h1>
+  <p class="tagline">Know your number.</p>
+</header>
+
+<p style="font-size:18px">
+  Tee tells you one thing, fast: how far you are from the green. Open a hole and the number is
+  right there — live GPS distance from where you stand, in yards or metres. No menus, no clutter.
+</p>
+
+<h2>What it does</h2>
+<div class="grid">
+  <div class="card">
+    <h3>Live distance</h3>
+    <p>GPS yardage to the green, updated as you walk up to your ball.</p>
+  </div>
+  <div class="card">
+    <h3>Map any course</h3>
+    <p>Drop a pin on each green from the satellite map — from the course or from your sofa.</p>
+  </div>
+  <div class="card">
+    <h3>Keep score</h3>
+    <p>One stepper per hole, running score to par, and a scorecard strip you can scrub.</p>
+  </div>
+  <div class="card">
+    <h3>Play as a group</h3>
+    <p>Share a six-character code. Everyone keeps their own card; the leaderboard is live.</p>
+  </div>
+  <div class="card">
+    <h3>Your bag</h3>
+    <p>Add your clubs and how far you actually carry them. Tee suggests the one that fits.</p>
+  </div>
+  <div class="card">
+    <h3>See the strokes</h3>
+    <p>Scoring average per 18, splits by par 3 / 4 / 5, best round, full history.</p>
+  </div>
+</div>
+
+<h2>Privacy, briefly</h2>
+<p>
+  No ads. No tracking. No advertising SDK. Tee collects the minimum it needs to work, your location
+  never leaves your phone except to fetch the weather at the course, and you can erase everything
+  from inside the app at any time. The
+  <a href="./privacy.html">full policy</a> spells out every field.
+</p>
+
+<div class="links">
+  <a href="./support.html">Support &amp; FAQ</a>
+  <a class="secondary" href="./privacy.html">Privacy Policy</a>
+  <a class="secondary" href="./delete-account.html">Delete your account</a>
+</div>
+
+<footer>
+  <p>Tee — Golf GPS &amp; Scorecard for iPhone.<br>
+  Contact: <a href="mailto:ffuensalida@icloud.com">ffuensalida@icloud.com</a></p>
+</footer>
+
+</div>
+</body>
+</html>

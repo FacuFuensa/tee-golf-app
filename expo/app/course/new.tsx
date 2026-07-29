@@ -24,6 +24,7 @@ import { Colors, Radius, Spacing, Typography, cardShadow, hairline } from "@/con
 import { useAuth } from "@/providers/AuthProvider";
 import { createCourseWithHoles, type NewHoleInput } from "@/services/db";
 import { notifySuccess, tapMedium } from "@/utils/haptics";
+import { checkCourseName } from "@/utils/moderation";
 
 type Phase = "details" | "mapping";
 
@@ -54,6 +55,7 @@ export default function NewCourseScreen() {
 
   const [phase, setPhase] = useState<Phase>("details");
   const [name, setName] = useState<string>("");
+  const [nameError, setNameError] = useState<string | null>(null);
   const [city, setCity] = useState<string>("");
   const [country, setCountry] = useState<string>("");
   const [holeCount, setHoleCount] = useState<number>(18);
@@ -91,6 +93,17 @@ export default function NewCourseScreen() {
 
   const startMapping = async (): Promise<void> => {
     if (name.trim().length < 2 || preparing) return;
+
+    // A hand-mapped course name reaches other golfers: it is shown in the round
+    // header to everyone who joins the group, and goes out in the invite text
+    // via the share sheet. So it gets the same pre-post filter as a display name.
+    const check = checkCourseName(name);
+    if (!check.ok) {
+      setNameError(check.reason);
+      return;
+    }
+    setNameError(null);
+
     setPreparing(true);
     try {
       const { status } = await Location.requestForegroundPermissionsAsync();
@@ -128,11 +141,14 @@ export default function NewCourseScreen() {
     };
     const next = [...holes, placed];
     tapMedium();
+    // Commit the green to state BEFORE saving, even on the last hole. Returning
+    // early without setHoles meant a failed save left `holes` one green short,
+    // and the retry button then silently persisted an incomplete course.
+    setHoles(next);
     if (next.length >= holeCount) {
       save.mutate(next);
       return;
     }
-    setHoles(next);
     setPar(4);
   };
 
@@ -177,11 +193,16 @@ export default function NewCourseScreen() {
               <TeeTextField
                 label="Course name"
                 value={name}
-                onChangeText={setName}
+                onChangeText={(text) => {
+                  setName(text);
+                  if (nameError) setNameError(null);
+                }}
                 placeholder="e.g. Riverbend Links"
                 autoCapitalize="words"
                 returnKeyType="next"
+                maxLength={40}
               />
+              {nameError ? <Text style={styles.fieldError}>{nameError}</Text> : null}
               <View style={styles.fieldRow}>
                 <TeeTextField
                   label="City"
@@ -379,6 +400,12 @@ const styles = StyleSheet.create({
   lead: { ...Typography.body, color: Colors.textSecondary, lineHeight: 22 },
   form: { gap: Spacing.lg },
   fieldRow: { flexDirection: "row", gap: Spacing.md },
+  fieldError: {
+    color: Colors.danger,
+    fontSize: 14,
+    fontWeight: "500",
+    marginTop: -Spacing.sm,
+  },
   fieldLabel: {
     fontSize: 11,
     fontWeight: "700",

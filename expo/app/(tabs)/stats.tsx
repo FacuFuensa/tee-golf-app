@@ -12,6 +12,7 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { TeeMark } from "@/components/TeeMark";
+import { TeeButton } from "@/components/ui/TeeButton";
 import { TeeCard } from "@/components/ui/TeeCard";
 import { Colors, Fonts, Radius, Spacing, Typography, hairline } from "@/constants/theme";
 import { useAuth } from "@/providers/AuthProvider";
@@ -73,6 +74,10 @@ export default function StatsScreen() {
           <View style={styles.center}>
             <ActivityIndicator color={Colors.accent} />
           </View>
+        ) : roundsQuery.isError ? (
+          /* Without this branch a backend failure rendered "No stats yet",
+             telling the golfer they had never played. */
+          <ErrorState onRetry={() => roundsQuery.refetch()} />
         ) : !stats || stats.holesPlayed === 0 ? (
           <EmptyState />
         ) : (
@@ -355,6 +360,20 @@ function EmptyState() {
   );
 }
 
+function ErrorState({ onRetry }: { onRetry: () => void }) {
+  return (
+    <View style={styles.center}>
+      <TeeMark size={56} tint={Colors.borderStrong} />
+      <Text style={styles.emptyTitle}>Couldn&apos;t load your stats</Text>
+      <Text style={styles.emptyBody}>
+        Your rounds are safe — we just couldn&apos;t reach them right now. Check your connection
+        and try again.
+      </Text>
+      <TeeButton label="Try again" variant="secondary" onPress={onRetry} style={styles.retry} />
+    </View>
+  );
+}
+
 function formatDate(iso: string): string {
   const d = new Date(iso);
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
@@ -552,4 +571,5 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 22,
   },
+  retry: { marginTop: Spacing.xl, alignSelf: "stretch", maxWidth: 260 },
 });

@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delete your account — Tee</title>
+<style>
+  :root {
+    --bg: #F2EDE3; --surface: #FFFFFF; --primary: #1C3A2B; --accent: #4E8C6A;
+    --text: #1C3A2B; --muted: #6E7B71; --border: rgba(28,58,43,0.12); --danger: #B0463B;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 0 20px 80px; background: var(--bg); color: var(--text);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  header { padding: 56px 0 32px; border-bottom: 1px solid var(--border); margin-bottom: 40px; }
+  .brand { font-size: 13px; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); font-weight: 700; margin: 0 0 12px; }
+  h1 { font-size: 34px; line-height: 1.2; margin: 0 0 12px; letter-spacing: -0.4px; }
+  .lede { color: var(--muted); font-size: 17px; margin: 0; }
+  h2 { font-size: 21px; margin: 40px 0 14px; letter-spacing: -0.2px; }
+  p, li { color: #2C4638; }
+  a { color: var(--accent); }
+  ul, ol { padding-left: 22px; }
+  li { margin-bottom: 8px; }
+  .steps { counter-reset: step; list-style: none; padding: 0; }
+  .steps li {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 16px 18px 16px 56px; margin-bottom: 10px; position: relative;
+  }
+  .steps li::before {
+    counter-increment: step; content: counter(step);
+    position: absolute; left: 16px; top: 16px;
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; font-weight: 700;
+  }
+  table { width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 15px; }
+  th, td { text-align: left; padding: 11px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: rgba(78,140,106,0.10); font-weight: 600; }
+  .scroll { overflow-x: auto; }
+  .warn {
+    background: rgba(176,70,59,0.08); border: 1px solid rgba(176,70,59,0.25);
+    border-radius: 14px; padding: 18px 20px; margin: 24px 0;
+  }
+  .warn strong { color: var(--danger); }
+  code { background: rgba(28,58,43,0.06); padding: 2px 6px; border-radius: 5px; font-size: 14px; }
+  footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #101A14; --surface: #17231C; --text: #E8EFE9; --muted: #9BAAA0; --border: rgba(232,239,233,0.14); --accent: #7FBF9B; --danger: #E08A7F; }
+    p, li { color: #D2DED6; }
+    th { background: rgba(127,191,155,0.14); }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="brand">Tee</p>
+  <h1>Delete your data or your account</h1>
+  <p class="lede">Both are done from inside the app, in a few taps. You never need to email anyone.</p>
+</header>
+
+<p>
+  Tee gives you two separate controls, because they do different things. Read the table below
+  before choosing.
+</p>
+
+<h2>Which one do you want?</h2>
+
+<div class="scroll">
+<table>
+  <thead>
+    <tr><th></th><th>Delete all my data</th><th>Delete account</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong>Your rounds and scores</strong></td><td>Deleted</td><td>Deleted</td></tr>
+    <tr><td><strong>Your statistics</strong></td><td>Deleted</td><td>Deleted</td></tr>
+    <tr><td><strong>Your saved course library</strong></td><td>Deleted</td><td>Deleted</td></tr>
+    <tr><td><strong>Your club bag</strong></td><td>Deleted</td><td>Deleted</td></tr>
+    <tr><td><strong>Courses you mapped by hand</strong></td><td>Kept</td><td>Deleted</td></tr>
+    <tr><td><strong>Your display name and email</strong></td><td>Kept</td><td>Deleted</td></tr>
+    <tr><td><strong>Your login</strong></td><td>Still works</td><td>Gone — you are signed out</td></tr>
+  </tbody>
+</table>
+</div>
+
+<h2>How to delete your data</h2>
+<ol class="steps">
+  <li>Open Tee and go to the <strong>Settings</strong> tab.</li>
+  <li>Scroll to the bottom and tap <strong>Delete all my data</strong>.</li>
+  <li>Confirm. Your rounds, scores, saved courses and clubs are erased immediately.</li>
+</ol>
+
+<h2>How to delete your account</h2>
+<ol class="steps">
+  <li>Open Tee and go to the <strong>Settings</strong> tab.</li>
+  <li>Scroll to the bottom and tap <strong>Delete account</strong>.</li>
+  <li>Confirm. Everything above is erased, your account record is removed, and you are signed out.</li>
+</ol>
+
+<div class="warn">
+  <p><strong>This cannot be undone.</strong></p>
+  <p style="margin-bottom:0">
+    Deletion is immediate and permanent. There is no grace period and no way for us to restore an
+    account afterwards — we do not keep a copy. If you only want to stop using Tee for a while,
+    simply sign out instead.
+  </p>
+</div>
+
+<h2>One thing that is deliberately kept</h2>
+<p>
+  If you pinned the location of a green while playing, that pin stays on the shared course map.
+  Greens are contributed to a common map so nobody has to map the same hole twice, and removing
+  yours would break the distance readout for every other golfer at that course.
+</p>
+<p>
+  The pin is a coordinate attached to a golf hole. It carries no name, no account link and nothing
+  that identifies you — after deletion there is no way to connect it back to you.
+</p>
+
+<h2>Can't get into the app?</h2>
+<p>
+  If you have lost access to your account and cannot reach the Settings screen, email
+  <a href="mailto:ffuensalida@icloud.com">ffuensalida@icloud.com</a> from the address you signed up
+  with and we will delete the account for you. We will confirm once it is done, normally within a
+  few days.
+</p>
+
+<footer>
+  <p>
+    <a href="./index.html">Tee</a> ·
+    <a href="./privacy.html">Privacy Policy</a> ·
+    <a href="./support.html">Support</a>
+  </p>
+</footer>
+
+</div>
+</body>
+</html>
