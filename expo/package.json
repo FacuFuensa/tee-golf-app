@@ -14,8 +14,9 @@
     "verify:release": "node store/verify-release.mjs",
     "verify:release:full": "node store/verify-release.mjs --bundle",
     "verify:backend": "node store/verify-backend.mjs",
-    "build:ios": "eas build --platform ios --profile production",
-    "submit:ios": "eas submit --platform ios --profile production"
+    "eas": "npx --yes eas-cli@latest",
+    "build:ios": "npx --yes eas-cli@latest build --platform ios --profile production",
+    "submit:ios": "npx --yes eas-cli@latest submit --platform ios --profile production"
   },
   "dependencies": {
     "@expo-google-fonts/newsreader": "^0.4.1",
