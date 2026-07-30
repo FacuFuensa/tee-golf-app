@@ -41,7 +41,7 @@ import { fetchWeather } from "@/services/weather";
 import type { Weather } from "@/services/weather";
 import { isWeatherConfigured } from "@/services/weatherConfig";
 import type { Club, Hole } from "@/types/models";
-import { computePlaysLike, recommendClub, windKind } from "@/utils/caddy";
+import { CADDY_CONFIG, computePlaysLike, recommendClub } from "@/utils/caddy";
 import type { ClubRecommendation, PlaysLikeBreakdown } from "@/utils/caddy";
 import { formatDistance, haversineMeters, metersToUnit, unitLabel, unitShort } from "@/utils/geo";
 import { notifySuccess, tapLight } from "@/utils/haptics";
@@ -1093,7 +1093,43 @@ function DistanceDisplay({
   );
 }
 
-/** Short, glanceable condition copy: "12 mph headwind, cool air". */
+/** Formats a wind speed in the unit family the golfer has chosen. */
+function windSpeed(mph: number, unit: "yards" | "meters"): string {
+  return unit === "yards"
+    ? `${Math.round(mph)} mph`
+    : `${Math.round(mph * 1.60934)} km/h`;
+}
+
+/**
+ * Describes the wind by naming the component that actually moves the number
+ * first.
+ *
+ * Reporting only the dominant component is what a weather app does, and here it
+ * misleads: a 10 mph wind can be mostly across while still carrying a 7 mph
+ * tailwind, and then the card reads "10 mph crosswind" next to "−10 yd", which
+ * says crosswind shortens a shot. It doesn't. Only the head/tail component
+ * changes distance, so that is what gets named, with the cross mentioned after
+ * it because it still matters for aim.
+ */
+function describeWind(breakdown: PlaysLikeBreakdown, unit: "yards" | "meters"): string {
+  const head = breakdown.headwindMph;
+  const cross = breakdown.crosswindMph;
+  const absHead = Math.abs(head);
+  const deadband = CADDY_CONFIG.windDeadbandMph;
+
+  if (absHead < deadband && cross < deadband) return "Calm";
+  if (absHead < deadband) {
+    return `${windSpeed(cross, unit)} across — no distance change`;
+  }
+
+  const along =
+    head > 0
+      ? `${windSpeed(absHead, unit)} into you`
+      : `${windSpeed(absHead, unit)} helping`;
+  return cross >= deadband ? `${along}, ${windSpeed(cross, unit)} across` : along;
+}
+
+/** Short, glanceable condition copy for the compact card: "7 mph helping, warm air". */
 function describeConditions(
   breakdown: PlaysLikeBreakdown,
   weather: Weather | null,
@@ -1104,18 +1140,13 @@ function describeConditions(
     // a release build, but must never leak an environment variable name if it is.
     return isWeatherConfigured ? "Based on raw distance" : "Conditions unavailable";
   }
+
   const parts: string[] = [];
-  const totalMph = Math.sqrt(
-    breakdown.headwindMph ** 2 + breakdown.crosswindMph ** 2
-  );
-  const speed =
-    unit === "yards"
-      ? `${Math.round(totalMph)} mph`
-      : `${Math.round(totalMph * 1.60934)} km/h`;
-  const kind = windKind(breakdown);
-  if (kind === "head") parts.push(`${speed} headwind`);
-  else if (kind === "tail") parts.push(`${speed} tailwind`);
-  else if (kind === "cross") parts.push(`${speed} crosswind`);
+  const wind = describeWind(breakdown, unit);
+  if (wind !== "Calm") {
+    // Drop the explanatory tail on the compact card — there is one line for it.
+    parts.push(wind.replace(" — no distance change", " across").replace(/, .* across$/, ""));
+  }
 
   if (weather.tempC <= 10) parts.push("cold air");
   else if (weather.tempC <= 16) parts.push("cool air");
@@ -1307,11 +1338,7 @@ function CaddyDetail({
               <CaddyFactor
                 icon={<Wind size={17} color={Colors.textSecondary} strokeWidth={2.2} />}
                 label="Wind"
-                detail={
-                  breakdown.hasWeather
-                    ? describeConditions(breakdown, weather, unit)
-                    : "—"
-                }
+                detail={breakdown.hasWeather ? describeWind(breakdown, unit) : "—"}
                 delta={breakdown.hasWeather ? formatDelta(breakdown.windDeltaMeters, unit) : "—"}
               />
             </View>
