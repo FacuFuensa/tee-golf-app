@@ -467,7 +467,8 @@ Facundo Fuensalida — ffuensalida@icloud.com
 - [x] API keys verified against the live endpoints and inlined into the production bundle
 - [x] Both keys registered as sensitive EAS env vars in `production` and `preview`, values verified
 - [x] Project linked as `@facundofuensa/tee`; `expo-doctor` 18/18
-- [ ] `eas build --platform ios --profile production` succeeds
+- [x] `eas build` succeeds — build 2, version 1.0.0, commit 566760d
+- [x] Binary uploaded to App Store Connect via `eas submit`
 
 **Privacy**
 - [x] Privacy manifest declares all six collected data types
@@ -500,6 +501,31 @@ Facundo Fuensalida — ffuensalida@icloud.com
 - [ ] Paid Apps agreement not needed — the app is free with no IAP
 
 ---
+
+## 8b. The last mile — what stands between here and Submit
+
+The binary is uploaded. Everything below is App Store Connect only; no more code.
+
+Apple processes the build for 5–10 minutes, then it becomes selectable in the
+**Build** section of the 1.0.0 version page. Selecting it is what enables
+**Add for Review**.
+
+These five block the submit button and are all easy to leave half-done:
+
+1. **Business → Trader Status** (top nav, outside the app). This is the DSA. It does
+   not block Submit — you find out later, when the app is missing from the EU store.
+2. **App Privacy** has its own **Publish** button at the end. Filling the
+   questionnaire is not enough; unpublished it reads as incomplete.
+3. **Age Rating** — User-Generated Content **Yes**, Social Media **No**, everything
+   else None. Lands at 4+.
+4. **App Review Information** — the demo account, and the Notes for Review from §7
+   pasted whole with `<PASSWORD>` substituted.
+5. **Screenshots** uploaded to the 6.9" slot (via *View All Sizes in Media Manager*)
+   or the 6.5" slot, whichever the UI offers. Both sets exist.
+
+Re-run `npm run verify:backend` right before you hit Submit. The demo account is
+the reviewer's only way in, and it is the one thing that can rot between
+uploading a build and review actually starting.
 
 ## 9. Build and submit
 
