@@ -11,6 +11,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "expo lint",
     "doctor": "npx expo-doctor",
+    "verify:release": "node store/verify-release.mjs",
+    "verify:release:full": "node store/verify-release.mjs --bundle",
+    "verify:backend": "node store/verify-backend.mjs",
     "build:ios": "eas build --platform ios --profile production",
     "submit:ios": "eas submit --platform ios --profile production"
   },
