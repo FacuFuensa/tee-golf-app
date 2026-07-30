@@ -9,8 +9,9 @@ the ones Apple actually quotes in rejections.
 
 ## 1. What you still have to do
 
-Two things are left: **§1.3** (register the keys as EAS secrets) and **§1.5** (screenshots).
-Everything else in this section is done and verified — kept here so the reasoning survives.
+**One thing is left: §1.5, the screenshots.** It needs an iPhone simulator, which is the only part
+of this I can't do. Everything else in this section is done and verified — kept here so the
+reasoning survives.
 
 ### 1.1 ~~Delete the stale lock file~~ — done
 
@@ -35,29 +36,24 @@ them from Settings, and a dead link there is a 5.1.1(i) rejection.
 > monitored contact route. Swap it for a dedicated address in all four files plus `links.ts` if you
 > would rather not publish your personal one.
 
-### 1.3 Register the API keys as EAS secrets
+### 1.3 ~~Register the API keys as EAS secrets~~ — done and verified
 
-Both keys are obtained and working — verified against the live endpoints (GolfCourseAPI returned
-Pebble Beach with an 18-hole scorecard; OpenWeatherMap returned 17.6 °C and 2.24 m/s from 254°).
-They are in `expo/.env`, which is gitignored, so local dev works.
+Both keys work against the live endpoints (GolfCourseAPI returned Pebble Beach with an 18-hole
+scorecard; OpenWeatherMap returned 17.6 °C and 2.24 m/s from 254°) and are registered as
+project-scoped, sensitive EAS environment variables in both `production` and `preview`. Verified
+byte-for-byte with `eas env:list --include-sensitive`, not just trusted from the create output.
 
-They are **not** in `eas.json`, because that file is committed and this repository is public. A
-published key can be spent by anyone against your quota. Register them as EAS secrets instead:
+They live in `expo/.env` for local development (gitignored) and are deliberately **not** in
+`eas.json`, which is committed to a public repository — a published key can be spent by anyone
+against your quota.
 
-```bash
-eas secret:create --scope project --name EXPO_PUBLIC_GOLF_COURSE_API_KEY --value <golf key>
-```
-```bash
-eas secret:create --scope project --name EXPO_PUBLIC_OPENWEATHER_API_KEY --value <weather key>
-```
+The project is linked as `@facundofuensa/tee`
+(`05c31e1c-a155-4d65-9a99-065087b50d12`), and `expo-doctor` now reports 18/18.
 
-Both values are in `expo/.env`. Verify with `eas secret:list` before building — an
-`EXPO_PUBLIC_` variable missing at build time is baked in as absent, and the feature ships dead.
-
-**Upgrade GolfCourseAPI before submitting.** The free tier is 50 requests/day and the key is baked
-into every copy of the binary, so the budget is shared across the entire installed base rather than
-per user. It will run dry during a multi-day review window, and the search screen then shows
-"Search failed" — a 2.1 "backend unavailable" rejection.
+**Still worth doing: upgrade GolfCourseAPI before submitting.** The free tier is 50 requests/day
+and the key is baked into every copy of the binary, so the budget is shared across the entire
+installed base rather than per user. It will run dry during a multi-day review window, and the
+search screen then shows "Search failed" — a 2.1 "backend unavailable" rejection.
 
 ### 1.4 ~~Apply the two SQL migrations~~ — done and verified
 
@@ -386,7 +382,8 @@ Facundo Fuensalida — ffuensalida@icloud.com
 - [x] Icon 1024×1024, RGB, **no alpha**, no baked-in corners — verified by decoding the PNG header
 - [x] `bun.lock` removed; npm is the package manager and `package-lock.json` is committed
 - [x] API keys verified against the live endpoints and inlined into the production bundle
-- [ ] `eas secret:create` for both keys, then `eas secret:list` to confirm (§1.3)
+- [x] Both keys registered as sensitive EAS env vars in `production` and `preview`, values verified
+- [x] Project linked as `@facundofuensa/tee`; `expo-doctor` 18/18
 - [ ] `eas build --platform ios --profile production` succeeds
 
 **Privacy**
@@ -423,15 +420,24 @@ Facundo Fuensalida — ffuensalida@icloud.com
 
 ## 9. Build and submit
 
+You are already logged in as `facundofuensa` and the project is linked, so this is the whole
+sequence:
+
 ```bash
 cd expo
-npm run doctor
-npm run typecheck
-eas login
-eas build:configure
+npm run doctor      # expect 18/18
+npm run typecheck   # expect silence
 npm run build:ios
-npm run submit:ios
 ```
 
-Fill in `eas.json` → `submit.production.ios` with your Apple ID, App Store Connect app ID and Team
-ID first — the three `REPLACE_WITH_` placeholders.
+EAS will offer to generate the iOS distribution certificate and provisioning profile — say yes; it
+manages them for you.
+
+Before `npm run submit:ios`, fill in `eas.json` → `submit.production.ios` with your Apple ID, the
+App Store Connect app ID and your Team ID (the three `REPLACE_WITH_` placeholders). The app ID only
+exists once you've created the app record in App Store Connect, so do that first — that is also
+where the name `Tee: Golf GPS & Scorecard` gets reserved.
+
+Note `cli.appVersionSource` is `remote`, so EAS owns the build number and increments it per build.
+The `buildNumber: "1"` in `app.json` is a starting point, not the source of truth — you will never
+hit the "a build with this version already exists" error on a resubmission.

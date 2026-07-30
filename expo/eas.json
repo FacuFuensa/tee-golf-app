@@ -15,20 +15,12 @@
       "distribution": "internal",
       "ios": {
         "simulator": false
-      },
-      "env": {
-        "EXPO_PUBLIC_GOLF_COURSE_API_KEY": "",
-        "EXPO_PUBLIC_OPENWEATHER_API_KEY": ""
       }
     },
     "production": {
       "autoIncrement": true,
       "ios": {
         "resourceClass": "m-medium"
-      },
-      "env": {
-        "EXPO_PUBLIC_GOLF_COURSE_API_KEY": "",
-        "EXPO_PUBLIC_OPENWEATHER_API_KEY": ""
       }
     }
   },
