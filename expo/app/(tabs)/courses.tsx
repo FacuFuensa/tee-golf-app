@@ -46,6 +46,7 @@ import {
   searchGolfCourses,
   type GolfApiCourse,
 } from "@/services/golfApi";
+import { geocodeCourse, withResolvedCoordinates } from "@/services/geocode";
 import { isGolfApiConfigured } from "@/services/golfApiConfig";
 import type { Course } from "@/types/models";
 import { formatProximity, haversineMeters } from "@/utils/geo";
@@ -290,37 +291,77 @@ export default function CoursesScreen() {
     },
   });
 
+  const savedExternalIds = useMemo<Set<string>>(
+    () =>
+      new Set(
+        (coursesQuery.data ?? [])
+          .map((c) => c.external_id)
+          .filter((id): id is string => id != null)
+      ),
+    [coursesQuery.data]
+  );
+
+  /**
+   * Distances for the top few unsaved catalog results.
+   *
+   * The catalog returns a postal address but no coordinates, so a distance can
+   * only be had by geocoding. That is bounded to the first handful of results —
+   * the search term already came from reverse-geocoding the golfer's own
+   * position, so anything it returns is in their area, and geocoding 25 rows to
+   * rank them would be wasteful.
+   */
+  const candidateQuery = useQuery({
+    queryKey: [
+      "nearby-candidates",
+      placeKey,
+      (catalogQuery.data ?? []).map((c) => c.id).slice(0, 6).join(","),
+    ],
+    enabled: coords != null && (catalogQuery.data ?? []).length > 0,
+    staleTime: 1000 * 60 * 30,
+    queryFn: async (): Promise<{ course: GolfApiCourse; meters: number }[]> => {
+      if (!coords) return [];
+      const candidates = (catalogQuery.data ?? [])
+        .filter((c) => !savedExternalIds.has(String(c.id)) && courseHoleCount(c) > 0)
+        .slice(0, 6);
+
+      const located = await Promise.all(
+        candidates.map(async (course) => {
+          const point = await geocodeCourse({
+            address: course.location?.address,
+            city: course.location?.city,
+            state: course.location?.state,
+            country: course.location?.country,
+            name: courseDisplayName(course),
+          });
+          if (!point) return null;
+          return {
+            course,
+            meters: haversineMeters(
+              coords.latitude,
+              coords.longitude,
+              point.latitude,
+              point.longitude
+            ),
+          };
+        })
+      );
+      return located.filter((x): x is { course: GolfApiCourse; meters: number } => x != null);
+    },
+  });
+
   // The closest catalog course you HAVEN'T added yet — surfaced only when it's
   // genuinely closer than your nearest saved course (or you have none nearby).
   const suggestion = useMemo<{ course: GolfApiCourse; meters: number } | null>(() => {
     if (!coords) return null;
-    const results = catalogQuery.data ?? [];
-    const savedExternalIds = new Set(
-      (coursesQuery.data ?? [])
-        .map((c) => c.external_id)
-        .filter((id): id is string => id != null)
-    );
     let best: { course: GolfApiCourse; meters: number } | null = null;
-    for (const c of results) {
-      if (savedExternalIds.has(String(c.id))) continue;
-      if (courseHoleCount(c) === 0) continue;
-      const loc = c.location;
-      if (typeof loc?.latitude !== "number" || typeof loc?.longitude !== "number") {
-        continue;
-      }
-      const meters = haversineMeters(
-        coords.latitude,
-        coords.longitude,
-        loc.latitude,
-        loc.longitude
-      );
-      if (!best || meters < best.meters) best = { course: c, meters };
+    for (const candidate of candidateQuery.data ?? []) {
+      if (!best || candidate.meters < best.meters) best = candidate;
     }
     if (!best || best.meters > 80000) return null;
     const nearestSaved = nearest?.meters ?? null;
     if (nearestSaved != null && best.meters >= nearestSaved) return null;
     return best;
-  }, [coords, catalogQuery.data, coursesQuery.data, nearest]);
+  }, [coords, candidateQuery.data, nearest]);
 
   const importCourse = useMutation({
     mutationFn: async (course: GolfApiCourse): Promise<void> => {
@@ -328,7 +369,8 @@ export default function CoursesScreen() {
       const full =
         courseHoleCount(course) > 0 ? course : await getGolfCourseDetail(course.id);
       const normalized = normalizeCatalogCourse(full);
-      await importCatalogCourse({ ...normalized, createdBy: user.id });
+      const located = await withResolvedCoordinates(normalized, full.location);
+      await importCatalogCourse({ ...located, createdBy: user.id });
     },
     onSuccess: () => {
       notifySuccess();

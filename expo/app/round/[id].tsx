@@ -1100,7 +1100,9 @@ function describeConditions(
   unit: "yards" | "meters"
 ): string {
   if (!breakdown.hasWeather || !weather) {
-    return isWeatherConfigured ? "Based on raw distance" : "Add a weather key for conditions";
+    // Both branches are user-facing on purpose: the second one is unreachable in
+    // a release build, but must never leak an environment variable name if it is.
+    return isWeatherConfigured ? "Based on raw distance" : "Conditions unavailable";
   }
   const parts: string[] = [];
   const totalMph = Math.sqrt(
@@ -1296,7 +1298,7 @@ function CaddyDetail({
               <Text style={styles.caddyNote}>
                 {isWeatherConfigured
                   ? "Weather is unavailable right now — showing the raw distance."
-                  : "Add an OpenWeatherMap key to factor in temperature and wind."}
+                  : "Conditions aren't available, so this is the raw distance."}
               </Text>
             ) : null}
 

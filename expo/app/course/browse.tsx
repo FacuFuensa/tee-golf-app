@@ -29,6 +29,7 @@ import {
   searchGolfCourses,
   type GolfApiCourse,
 } from "@/services/golfApi";
+import { withResolvedCoordinates } from "@/services/geocode";
 import { isGolfApiConfigured } from "@/services/golfApiConfig";
 import { notifySuccess, tapLight } from "@/utils/haptics";
 
@@ -78,7 +79,11 @@ export default function BrowseCoursesScreen() {
       const full =
         courseHoleCount(course) > 0 ? course : await getGolfCourseDetail(course.id);
       const normalized = normalizeCatalogCourse(full);
-      await importCatalogCourse({ ...normalized, createdBy: user.id });
+      // The catalog gives an address but never coordinates, so derive them here.
+      // Without them the green picker would anchor on the golfer instead of the
+      // course, and nearest-first sorting would never see this course.
+      const located = await withResolvedCoordinates(normalized, full.location);
+      await importCatalogCourse({ ...located, createdBy: user.id });
     },
     onSuccess: (_data, course) => {
       notifySuccess();
@@ -303,11 +308,13 @@ function NotConfigured() {
   return (
     <View style={styles.configWrap}>
       <TeeCard style={styles.configCard}>
-        <Text style={styles.configTitle}>Add your catalog key</Text>
+        {/* Unreachable in a release build, which always ships a catalog key.
+            Kept as user-facing copy rather than developer instructions so no
+            build can ever show an environment variable name to a golfer. */}
+        <Text style={styles.configTitle}>Course search is unavailable</Text>
         <Text style={styles.stateBody}>
-          Paste a free GolfCourseAPI key into{" "}
-          <Text style={styles.mono}>EXPO_PUBLIC_GOLF_COURSE_API_KEY</Text> to search 30,000+
-          courses. Until then, you can still map courses by hand.
+          We can&apos;t reach the course catalog right now. You can still map a course by hand from
+          the Courses tab — it only takes a few minutes.
         </Text>
       </TeeCard>
     </View>

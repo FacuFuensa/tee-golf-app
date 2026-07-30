@@ -9,27 +9,17 @@ the ones Apple actually quotes in rejections.
 
 ## 1. What you still have to do
 
-Nothing else in this document needs your input — these five do.
+Two things are left: **§1.3** (register the keys as EAS secrets) and **§1.5** (screenshots).
+Everything else in this section is done and verified — kept here so the reasoning survives.
 
-### 1.1 Delete the stale lock file — **do this first**
+### 1.1 ~~Delete the stale lock file~~ — done
 
-`bun.lock` still lists `@rork-ai/toolkit-sdk` and the other dependencies removed for this build. EAS
-picks the package manager from whichever lock file it finds, so if `bun.lock` survives, a cloud
-build reinstalls the PostHog analytics SDK that was just taken out.
+`bun.lock` is removed and `package-lock.json` is committed. npm is now the package manager, so a
+cloud build can no longer reinstall the PostHog SDK that `bun.lock` still listed.
 
-```bash
-cd "C:\Claude Webs\tee-golf-app\expo" && git rm --cached bun.lock && rm bun.lock
-```
+### 1.2 ~~Publish the website~~ — done
 
-Then commit `package-lock.json` alongside it.
-
-### 1.2 Publish the website
-
-Four pages are written and sitting in `docs/` at the repo root. Turn on GitHub Pages:
-
-**GitHub → your repo → Settings → Pages → Source: "Deploy from a branch" → Branch: `main`, folder: `/docs`**
-
-Confirm all four load without a login, then paste the URLs into App Store Connect:
+GitHub Pages is live and all four pages return 200. Paste these into App Store Connect:
 
 | App Store Connect field | URL |
 | --- | --- |
@@ -45,41 +35,41 @@ them from Settings, and a dead link there is a 5.1.1(i) rejection.
 > monitored contact route. Swap it for a dedicated address in all four files plus `links.ts` if you
 > would rather not publish your personal one.
 
-### 1.3 Get the two API keys
+### 1.3 Register the API keys as EAS secrets
 
-Both are free and take an email. I can't create accounts on your behalf.
+Both keys are obtained and working — verified against the live endpoints (GolfCourseAPI returned
+Pebble Beach with an 18-hole scorecard; OpenWeatherMap returned 17.6 °C and 2.24 m/s from 254°).
+They are in `expo/.env`, which is gitignored, so local dev works.
 
-| Key | Where | Free tier |
-| --- | --- | --- |
-| `EXPO_PUBLIC_GOLF_COURSE_API_KEY` | [golfcourseapi.com](https://golfcourseapi.com) | 50 req/day |
-| `EXPO_PUBLIC_OPENWEATHER_API_KEY` | [openweathermap.org/api](https://openweathermap.org/api) | 1,000 calls/day |
-
-**Check Rork first** — if the app was ever built there with these working, the keys are already set
-as environment variables: **rork.com → your project → Settings → Environment Variables** (also
-labelled *Secrets* in some builds). Copy them out from there rather than registering again.
-
-Put them in `eas.json` under `build.production.env`, or better as EAS secrets:
+They are **not** in `eas.json`, because that file is committed and this repository is public. A
+published key can be spent by anyone against your quota. Register them as EAS secrets instead:
 
 ```bash
-eas secret:create --scope project --name EXPO_PUBLIC_GOLF_COURSE_API_KEY --value <key>
+eas secret:create --scope project --name EXPO_PUBLIC_GOLF_COURSE_API_KEY --value <golf key>
+```
+```bash
+eas secret:create --scope project --name EXPO_PUBLIC_OPENWEATHER_API_KEY --value <weather key>
 ```
 
-**50 requests/day is shared across every install**, so it will run dry mid-review. Upgrade
-GolfCourseAPI to a paid tier before submitting, or expect a 2.1 "backend unavailable" rejection.
+Both values are in `expo/.env`. Verify with `eas secret:list` before building — an
+`EXPO_PUBLIC_` variable missing at build time is baked in as absent, and the feature ships dead.
 
-If you decide to ship without the golf key, tell me — I need to hide the search entry points first.
-Shipping them dead is a guaranteed rejection (2.1(a) placeholder content): the reviewer's very
-first tap on an empty account is "Search courses", which currently lands on a card telling them to
-paste an API key into an environment variable.
+**Upgrade GolfCourseAPI before submitting.** The free tier is 50 requests/day and the key is baked
+into every copy of the binary, so the budget is shared across the entire installed base rather than
+per user. It will run dry during a multi-day review window, and the search screen then shows
+"Search failed" — a 2.1 "backend unavailable" rejection.
 
-### 1.4 Apply the two SQL migrations
+### 1.4 ~~Apply the two SQL migrations~~ — done and verified
 
-Supabase → SQL Editor → paste and run, in order:
+Both are applied. `node store/verify-backend.mjs` signs in as the demo account and walks the same
+reads the app performs, then probes the writes that should now be refused. All 11 checks pass:
 
-1. `supabase/migrations/0010_appstore_hardening.sql` — safe, apply directly.
-2. `supabase/migrations/0011_scope_reads.sql` — **narrows read access.** A mistake here shows up as
-   missing data, not an error. Apply it, then walk the seven-step checklist in the comment block at
-   the bottom of that file on a real device before building.
+- The app still works: 18 holes load, all greens pinned, 54 scores, 14 clubs.
+- Privacy is closed: 0 other golfers' profiles visible, 0 foreign hand-mapped courses readable.
+- Writes are scoped: rewriting a hole's `par` is refused with `42501` (insufficient_privilege), and
+  the moderation trigger rejects an objectionable display name while accepting a normal one.
+
+Re-run that script any time you touch RLS.
 
 ### 1.5 Take the screenshots
 
@@ -131,9 +121,10 @@ login after every rejection**; a locked demo account is the second most common 2
 
 ## 3. App Store Connect metadata
 
-Every string below is written only from features that work **today**. If you ship without the API
-keys, do not add anything about a 30,000-course catalog or wind-adjusted distances — that would be
-inaccurate metadata under 2.3.1.
+Every claim below is a feature that works in the shipping build. The catalog search and the
+wind/temperature caddy are included because the API keys are now configured — if you ever ship
+without them, remove the FIND ANY COURSE and SMART CADDY blocks, because 2.3.1 rejects a
+description promoting a feature the app doesn't have.
 
 **App Name** (25/30)
 ```
@@ -162,8 +153,14 @@ Tee tells you one thing, fast: how far you are from the green.
 
 Open a hole and the number is right there — live GPS distance from where you stand to the green, in yards or metres. No menus, no clutter. Know your number, pick a club, hit it.
 
+FIND ANY COURSE
+Search a catalog of 30,000+ courses worldwide and add yours in a tap, with the full scorecard — every par and yardage — already filled in. Your library sorts itself so the course you're standing on is at the top.
+
+SMART CADDY
+Wind and temperature change how far a shot really plays. Tee reads the conditions at your position, splits the wind into the part that fights you and the part that just pushes you sideways, and shows what the distance actually plays like — then picks the club in your bag that matches.
+
 BUILD YOUR OWN COURSES
-Drop a pin on the centre of each green to map a course in a few minutes — from the course itself, or from your sofa on the satellite map. Set the par per hole, save 9 or 18, and finish early if you only mapped the front nine. Your library sorts itself so the course you're standing on is at the top.
+Course scorecards give pars and yardages, but no database has the GPS coordinate of each green. So you drop a pin on the centre of each one — from the course itself, or from your sofa on the satellite map. A green you pin is shared, so nobody has to map the same hole twice.
 
 PLAY AND SCORE
 Tap through holes, set your score with a single stepper, and watch your round to par build across the scorecard strip. Adjust a green from the satellite map any time the pin moves.
@@ -181,16 +178,6 @@ MADE FOR THE ROUND
 Yards or metres, one tap. Portrait, one hand, big type you can read in the sun.
 
 Tee stores your courses, rounds and clubs in your own account. There are no ads and no tracking. You can delete all of your data, or delete your account entirely, from Settings at any time.
-```
-
-**Once the API keys ship**, add these two blocks to the description:
-
-```
-FIND ANY COURSE
-Search a catalog of 30,000+ courses worldwide and add yours in a tap, with the full scorecard — every par and yardage — already filled in.
-
-SMART CADDY
-Wind and temperature change how far a shot really plays. Tee reads the conditions at your position, splits the wind along your shot line, and shows what the distance actually plays like — then picks the club for it.
 ```
 
 **Other fields**
@@ -397,7 +384,9 @@ Facundo Fuensalida — ffuensalida@icloud.com
 - [x] No hardcoded IPv4 literals (all HTTPS hostnames — IPv6-safe)
 - [x] No debug menus, test flags or placeholder screens
 - [x] Icon 1024×1024, RGB, **no alpha**, no baked-in corners — verified by decoding the PNG header
-- [ ] `git rm bun.lock` (§1.1)
+- [x] `bun.lock` removed; npm is the package manager and `package-lock.json` is committed
+- [x] API keys verified against the live endpoints and inlined into the production bundle
+- [ ] `eas secret:create` for both keys, then `eas secret:list` to confirm (§1.3)
 - [ ] `eas build --platform ios --profile production` succeeds
 
 **Privacy**
@@ -405,7 +394,7 @@ Facundo Fuensalida — ffuensalida@icloud.com
 - [x] Required-reason API declared (`UserDefaults`, `CA92.1`)
 - [x] Location purpose string names the feature and the benefit
 - [x] No tracking, no ATT prompt, no advertising SDK — verified against the compiled bundle
-- [ ] Privacy policy live and publicly reachable (§1.2)
+- [x] Privacy policy live and publicly reachable — all four pages return 200
 - [ ] App Privacy answers entered per §5
 
 **Accounts**
