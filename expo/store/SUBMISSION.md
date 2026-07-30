@@ -87,7 +87,34 @@ reads the app performs, then probes the writes that should now be refused. All 1
 
 Re-run that script any time you touch RLS.
 
-### 1.5 Take the screenshots
+### 1.5 ~~Take the screenshots~~ — six are done
+
+`store/screenshots/6.9/` holds six upload-ready shots, all exactly 1290 × 2796, RGB, no alpha,
+scaled 1.094× from native iPhone 16 PNGs:
+
+| File | Shows |
+| --- | --- |
+| `1-live-distance.png` | The hero: 307 yd to the green, "Driver, all of it" |
+| `2-set-green.png` | Crosshair centred on a real green, satellite imagery |
+| `3-courses.png` | The library with "Closest to you · 193 yd" and real distances |
+| `4-leaderboard.png` | Four players mid-round, plus the report/block affordance |
+| `5-statistics.png` | +12 scoring average, improving form |
+| `6-your-bag.png` | Fourteen clubs with carries |
+
+Two are held back:
+
+- `reshoot-smart-caddy.png` — shot before the wind-description fix, so it still reads "10 mph
+  crosswind" next to "−10 yd". Reload the app and retake it, then it's a good seventh.
+- `weak-find-a-course.png` — an empty search screen. 2.3.3 wants the app *in use*; a search box
+  with no results is borderline. `3-courses.png` covers the same ground better.
+
+**Send screenshots off the phone as files, not photos.** The first batch came through WhatsApp as
+945 × 2048 JPEGs — 36% of the pixels gone and lossy compression baked in, which forced a 1.365×
+upscale of already-degraded text instead of 1.094× of a clean original. The difference is visible in
+body copy at Retina size. WhatsApp's "Document" option, a USB cable, or iCloud Photos all preserve
+the original PNG.
+
+### 1.5b How they were made (for the next release)
 
 Only **one** size class is required, because the app is iPhone-only and portrait-locked:
 
