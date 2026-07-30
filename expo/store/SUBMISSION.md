@@ -55,7 +55,27 @@ and the key is baked into every copy of the binary, so the budget is shared acro
 installed base rather than per user. It will run dry during a multi-day review window, and the
 search screen then shows "Search failed" — a 2.1 "backend unavailable" rejection.
 
-### 1.4 ~~Apply the two SQL migrations~~ — done and verified
+### 1.4b Run migration 0012 — **group rounds are broken without it**
+
+`supabase/migrations/0012_fix_join_ambiguity.sql`. Paste it into the Supabase SQL editor.
+
+**Joining a group round by code has never worked**, since 0004 shipped. The function is declared
+`returns table (round_id uuid, ...)`, which creates a plpgsql variable of that name; the body then
+used `on conflict (round_id, profile_id)`, and an ON CONFLICT target is resolved in an expression
+context where the variable shadows the column. Every join raised
+`column reference "round_id" is ambiguous`, and the app showed it as the generic "Couldn't join.
+Try again." A host could read the invite code, but nobody could ever come in — which is why the
+leaderboard never had a second player.
+
+This is a Guideline 2.1 blocker on its own: group rounds are in the description, in the screenshots
+and on the Courses tab, and the feature is dead. A reviewer testing it with two accounts hits it
+immediately.
+
+Reading the SQL does not reveal it, and neither does calling the RPC with a code that matches
+nothing — that path returns before the insert is ever planned. `store/verify-backend.mjs` now
+creates a real round and actually joins it, twice, then cleans up.
+
+### 1.4 ~~Apply migrations 0010 and 0011~~ — done and verified
 
 Both are applied. `node store/verify-backend.mjs` signs in as the demo account and walks the same
 reads the app performs, then probes the writes that should now be refused. All 11 checks pass:

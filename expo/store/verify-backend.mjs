@@ -142,6 +142,66 @@ const { error: okNameErr } = await supabase
   .eq("id", uid);
 check("Server still accepts a normal display name", okNameErr == null);
 
+console.log("\nGroup rounds must actually work (0012):");
+
+/**
+ * join_round_by_code shipped broken from 0004 until 0012: its OUT variable
+ * `round_id` shadowed the column in the ON CONFLICT target, so every join raised
+ * "column reference round_id is ambiguous" and no one could ever join a round.
+ *
+ * Reading the SQL does not reveal it, and neither does calling the function with
+ * a code that matches nothing — that path returns before reaching the insert, so
+ * the statement is never planned and never raises. The test has to create a real
+ * round and actually join it. That is the whole lesson of this bug.
+ */
+const probeCode = "ZQ" + Math.floor(Math.random() * 9000 + 1000).toString();
+const probeRoundId = crypto.randomUUID();
+
+const { error: probeCreateErr } = await supabase.from("rounds").insert({
+  id: probeRoundId,
+  course_id: courseId,
+  owner_id: uid,
+  format: "stroke",
+  is_multiplayer: true,
+  join_code: probeCode,
+  started_at: new Date().toISOString(),
+});
+
+if (probeCreateErr) {
+  check("could create a probe round to test joining", false, probeCreateErr.message);
+} else {
+  const { data: joinData, error: joinErr } = await supabase.rpc("join_round_by_code", {
+    p_code: probeCode,
+  });
+  check(
+    "join_round_by_code seats a player in a real round",
+    joinErr == null,
+    joinErr ? `raised: ${joinErr.message}` : "returned cleanly"
+  );
+  const row = Array.isArray(joinData) ? joinData[0] : joinData;
+  check(
+    "it returns the round and course ids",
+    row?.round_id === probeRoundId && row?.course_id === courseId,
+    row ? `round_id=${String(row.round_id).slice(0, 8)}…` : "no row returned"
+  );
+
+  // Joining twice must be idempotent, which is the exact path ON CONFLICT used
+  // to cover — and the one that raised.
+  const { error: rejoinErr } = await supabase.rpc("join_round_by_code", { p_code: probeCode });
+  check(
+    "joining the same round twice is idempotent",
+    rejoinErr == null,
+    rejoinErr ? `raised: ${rejoinErr.message}` : "no error"
+  );
+
+  // Clean up so the probe never shows in the app or blocks the unique index on
+  // active join codes.
+  await supabase.from("scores").delete().eq("round_id", probeRoundId);
+  await supabase.from("round_players").delete().eq("round_id", probeRoundId);
+  const { error: cleanupErr } = await supabase.from("rounds").delete().eq("id", probeRoundId);
+  check("probe round cleaned up", cleanupErr == null, cleanupErr?.message);
+}
+
 await supabase.auth.signOut();
 console.log(`\n${failures === 0 ? "All checks passed." : failures + " check(s) failed."}`);
 process.exit(failures > 0 ? 1 : 0);
