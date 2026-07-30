@@ -74,17 +74,45 @@ Only **one** size class is required, because the app is iPhone-only and portrait
 **6.9″ portrait — 1320 × 2868, or 1290 × 2796, or 1260 × 2736.** Up to 10; Apple downscales for
 every other device.
 
-Shoot on an iPhone 16 Pro Max / 17 Pro Max simulator, signed in as the demo account:
+**Check your iPhone first.** Settings → General → About → Model Name.
 
-1. Play screen with the big yardage number
-2. Satellite green picker with the crosshair
+| Your phone | Native screenshot | Covers the required 6.9″ slot? |
+| --- | --- | --- |
+| 17 Pro Max / 16 Pro Max / 15 Pro Max / Air | 1290 × 2796 | **Yes** — shoot on the device |
+| 17 Pro / 16 Pro / 15 Pro / 17 | 1206 × 2622 | No — that's the 6.3″ class |
+| 16 / 15 / 14 | 1179 × 2556 | No |
+
+If your phone isn't a Pro Max, use the iPhone 17 Pro Max simulator in Xcode instead, or upscale is
+**not** an option — Apple validates exact pixel dimensions.
+
+**Sign in as the demo account to shoot them.** This matters more than it sounds. Its seeded data
+reads as a believable mid-handicap golfer improving — verified live: scoring average **+12** per 18,
+rounds of 79 / 85 / 89, 33% pars, 2% birdie rate, zero triple bogeys. A real testing account tends
+to show things like +50 and 67% triple bogeys, which is honest but makes the app look broken to
+someone who doesn't know it's test data.
+
+Five of the seven shots need no location at all and can be taken anywhere:
+
 3. Smart Caddy sheet
 4. Group leaderboard with the invite code
 5. Courses tab with the library
 6. Stats — scoring average hero
 7. Your bag
 
-Do **not** screenshot the sign-in or splash screen — 2.3.3 rejects those specifically.
+The two play-screen shots **do** need you to be at a course, because the hero number is a live GPS
+distance and anywhere else it correctly shows "You're not at this course":
+
+1. Play screen with the big yardage number
+2. Satellite green picker with the crosshair
+
+The easy way to get those: on your own account, add **Pebble Creek Country Club** from the catalog —
+it geocodes to about 180 yd from you — then open hole 1, tap the satellite map, and place the green
+on the actual green. Zoom in and they are obvious: smooth mown ovals, usually with a bunker beside
+them. Do not leave a pin sitting on a house; greens are shared, so a wrong pin becomes wrong for
+every other golfer at that course, and it looks like the app is pointing at a driveway.
+
+Do **not** screenshot the sign-in or splash screen — 2.3.3 rejects those specifically. Also don't
+capture mid-scroll: a half-rendered card above the status bar is an obvious tell.
 
 Simulator captures are RGBA. **Alpha in a screenshot is a hard upload failure**, so flatten them:
 
