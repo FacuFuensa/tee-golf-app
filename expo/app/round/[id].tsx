@@ -42,7 +42,7 @@ import type { Weather } from "@/services/weather";
 import { isWeatherConfigured } from "@/services/weatherConfig";
 import type { Club, Hole } from "@/types/models";
 import { computePlaysLike, recommendClub, windKind } from "@/utils/caddy";
-import type { PlaysLikeBreakdown } from "@/utils/caddy";
+import type { ClubRecommendation, PlaysLikeBreakdown } from "@/utils/caddy";
 import { formatDistance, haversineMeters, metersToUnit, unitLabel, unitShort } from "@/utils/geo";
 import { notifySuccess, tapLight } from "@/utils/haptics";
 
@@ -252,7 +252,7 @@ export default function PlayRoundScreen() {
     );
   }, [distanceMeters, location.coords, currentHole, weather]);
 
-  const recommendedClub = useMemo<Club | null>(
+  const recommendedClub = useMemo<ClubRecommendation | null>(
     () => (playsLike ? recommendClub(playsLike.playsLikeMeters, clubs) : null),
     [playsLike, clubs]
   );
@@ -1125,6 +1125,26 @@ function describeConditions(
   return parts.join(", ");
 }
 
+/**
+ * The club name, qualified when the shot doesn't fit a normal swing. A 30-yard
+ * pitch is "closest" to a 65-yard lob wedge, and naming the club bare would read
+ * as "hit it" — so say what kind of shot it actually is.
+ */
+function clubHeadline(rec: ClubRecommendation): string {
+  if (rec.fit === "partial") return `${rec.club.name}, partial`;
+  if (rec.fit === "beyond") return `${rec.club.name}, all of it`;
+  return rec.club.name;
+}
+
+/** Explains an imperfect fit in the caddy's subtitle slot. */
+function describeFit(rec: ClubRecommendation, unit: "yards" | "meters"): string {
+  const gap = Math.round(metersToUnit(Math.abs(rec.deltaMeters), unit));
+  if (rec.fit === "partial") {
+    return `${gap} ${unitShort(unit)} inside your shortest club — take something off it`;
+  }
+  return `${gap} ${unitShort(unit)} past your longest club — lay up short`;
+}
+
 /** Signed plays-like contribution, e.g. "+6 yd" / "−3 yd" / "No change". */
 function formatDelta(meters: number, unit: "yards" | "meters"): string {
   const v = Math.round(metersToUnit(Math.abs(meters), unit));
@@ -1149,7 +1169,7 @@ function CaddyBlock({
 }: {
   breakdown: PlaysLikeBreakdown;
   weather: Weather | null;
-  club: Club | null;
+  club: ClubRecommendation | null;
   hasClubs: boolean;
   unit: "yards" | "meters";
   onPress: () => void;
@@ -1184,14 +1204,14 @@ function CaddyBlock({
       </View>
       <View style={styles.caddyInfo}>
         <Text style={styles.caddyTitle} numberOfLines={1}>
-          {club?.name ?? "—"}
+          {club ? clubHeadline(club) : "—"}
           <Text style={styles.caddyPlays}>
             {"  ·  Plays "}
             {playsLike} {unitShort(unit)}
           </Text>
         </Text>
         <Text style={styles.caddyReason} numberOfLines={1}>
-          {reason}
+          {club && club.fit !== "full" ? describeFit(club, unit) : reason}
         </Text>
       </View>
       <ChevronRight size={20} color={Colors.textTertiary} strokeWidth={2.4} />
@@ -1212,7 +1232,7 @@ function CaddyDetail({
   visible: boolean;
   breakdown: PlaysLikeBreakdown | null;
   weather: Weather | null;
-  club: Club | null;
+  club: ClubRecommendation | null;
   hasClubs: boolean;
   unit: "yards" | "meters";
   onClose: () => void;
@@ -1263,9 +1283,11 @@ function CaddyDetail({
                   <Briefcase size={18} color={Colors.accent} strokeWidth={2.4} />
                 </View>
                 <View style={styles.caddyInfo}>
-                  <Text style={styles.caddyClubName}>{club.name}</Text>
+                  <Text style={styles.caddyClubName}>{clubHeadline(club)}</Text>
                   <Text style={styles.caddyReason}>
-                    {formatDistance(club.carry_meters, unit)} {unitShort(unit)} carry
+                    {club.fit === "full"
+                      ? `${formatDistance(club.club.carry_meters, unit)} ${unitShort(unit)} carry`
+                      : describeFit(club, unit)}
                   </Text>
                 </View>
               </View>
@@ -1429,6 +1451,9 @@ function formatToPar(toPar: number): string {
 
 function scoreToPar(strokes: number, par: number): { label: string; tone: "under" | "par" | "over" } {
   const diff = strokes - par;
+  // One stroke is a hole in one, whatever the par. Golfers never call an ace on
+  // a par 3 an "eagle", even though it is two under.
+  if (strokes === 1) return { label: "Hole in one", tone: "under" };
   if (diff <= -3) return { label: "Albatross", tone: "under" };
   if (diff === -2) return { label: "Eagle", tone: "under" };
   if (diff === -1) return { label: "Birdie", tone: "under" };

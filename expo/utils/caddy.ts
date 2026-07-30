@@ -113,12 +113,38 @@ export function computePlaysLike(
   };
 }
 
-/** Match a plays-like distance to the club in the bag with the closest carry. */
+/**
+ * How well the recommended club actually fits the shot.
+ *
+ * "closest carry wins" is the right rule in the middle of the bag, but it lies
+ * at both ends. A 30-yard pitch is closest to a 65-yard lob wedge, and naming
+ * that club with no qualifier reads as "hit your lob wedge" — which would put
+ * the ball 35 yards past the flag. Same on the long end: a 280-yard shot is
+ * "closest" to a driver you carry 230.
+ */
+export type ClubFit = "full" | "partial" | "beyond";
+
+export interface ClubRecommendation {
+  club: Club;
+  fit: ClubFit;
+  /** Meters between the shot and that club's carry. Positive = shot is longer. */
+  deltaMeters: number;
+}
+
+/**
+ * A shot within this fraction of a club's carry is a normal swing. Outside it,
+ * at the ends of the bag, the golfer is manufacturing a shot rather than
+ * choosing a club.
+ */
+const FULL_SWING_TOLERANCE = 0.1;
+
+/** Match a plays-like distance to the club in the bag that best fits the shot. */
 export function recommendClub(
   playsLikeMeters: number,
   clubs: Club[]
-): Club | null {
+): ClubRecommendation | null {
   if (clubs.length === 0) return null;
+
   let best = clubs[0];
   let bestDiff = Math.abs(clubs[0].carry_meters - playsLikeMeters);
   for (const club of clubs) {
@@ -128,7 +154,20 @@ export function recommendClub(
       bestDiff = diff;
     }
   }
-  return best;
+
+  const carries = clubs.map((c) => c.carry_meters);
+  const shortest = Math.min(...carries);
+  const longest = Math.max(...carries);
+  const deltaMeters = playsLikeMeters - best.carry_meters;
+
+  let fit: ClubFit = "full";
+  if (playsLikeMeters < shortest * (1 - FULL_SWING_TOLERANCE)) {
+    fit = "partial";
+  } else if (playsLikeMeters > longest * (1 + FULL_SWING_TOLERANCE)) {
+    fit = "beyond";
+  }
+
+  return { club: best, fit, deltaMeters };
 }
 
 /** Qualitative wind type for short, glanceable copy. */
