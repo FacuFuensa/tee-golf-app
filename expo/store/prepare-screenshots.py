@@ -30,11 +30,17 @@ except ImportError:
 
 HERE = Path(__file__).parent
 RAW = HERE / "screenshots" / "raw"
-OUT = HERE / "screenshots" / "6.9"
 
-# The 6.9" portrait sizes Apple accepts. We target the middle one because it is
-# what the current Pro Max models shoot natively, so it is the best-tested path.
-TARGET = (1290, 2796)
+# App Store Connect requires the 6.9" class, but its default visible slot is
+# often 6.5", which rejects 6.9" files outright. Rather than guess which slot the
+# UI will offer, emit both — the same source, two sizes, upload whichever fits.
+#
+# 6.9" is 0.023% off the iPhone 16's aspect ratio and 6.5" is 0.203% off. Both
+# are far below what an eye resolves, so neither needs a crop or a letterbox.
+TARGETS = {
+    "6.9": (1290, 2796),
+    "6.5": (1284, 2778),
+}
 
 # Sizes we recognise, so the script can tell you what it found rather than
 # silently rescaling something unexpected.
@@ -65,62 +71,58 @@ def main() -> int:
         print(f"No images found in {RAW}")
         return 1
 
-    OUT.mkdir(parents=True, exist_ok=True)
-    print(f"Target: {TARGET[0]} x {TARGET[1]}  (6.9\" portrait)\n")
+    total = 0
+    for slot, target in TARGETS.items():
+        out_dir = HERE / "screenshots" / slot
+        out_dir.mkdir(parents=True, exist_ok=True)
+        print(f'{slot}" portrait -> {target[0]} x {target[1]}')
 
-    written = 0
-    for path in shots:
-        with Image.open(path) as im:
-            src = im.size
-            label = KNOWN.get(src, "unrecognised size")
-            had_alpha = im.mode in ("RGBA", "LA", "P")
+        written = 0
+        for path in shots:
+            with Image.open(path) as im:
+                src = im.size
+                label = KNOWN.get(src, "unrecognised size")
+                had_alpha = im.mode in ("RGBA", "LA", "P")
 
-            # Flatten onto the app's cream background rather than black, so any
-            # transparent edge blends instead of showing a hard border.
-            if had_alpha:
-                flat = Image.new("RGB", src, (242, 237, 227))
-                rgba = im.convert("RGBA")
-                flat.paste(rgba, mask=rgba.split()[-1])
-                work = flat
-            else:
-                work = im.convert("RGB")
+                # Flatten onto the app's cream background rather than black, so
+                # any transparent edge blends instead of showing a hard border.
+                if had_alpha:
+                    flat = Image.new("RGB", src, (242, 237, 227))
+                    rgba = im.convert("RGBA")
+                    flat.paste(rgba, mask=rgba.split()[-1])
+                    work = flat
+                else:
+                    work = im.convert("RGB")
 
-            if src == TARGET:
-                out = work
-                action = "already the right size"
-            else:
-                out = work.resize(TARGET, Image.LANCZOS)
-                action = f"scaled {TARGET[0]/src[0]:.4f}x"
+                out = work if src == target else work.resize(target, Image.LANCZOS)
+                dest = out_dir / (path.stem + ".png")
+                # optimize keeps the file well under Apple's limit without
+                # touching pixels; PNG is lossless either way.
+                out.save(dest, "PNG", optimize=True)
+                written += 1
 
-            dest = OUT / (path.stem + ".png")
-            # optimize keeps the file well under Apple's limit without touching
-            # pixels; PNG is lossless either way.
-            out.save(dest, "PNG", optimize=True)
-            written += 1
+                if slot == list(TARGETS)[0]:
+                    print(
+                        f"    {path.name:24} {src[0]}x{src[1]} ({label})"
+                        f"{'  [had alpha]' if had_alpha else ''}"
+                    )
 
-            print(f"  {path.name}")
-            print(f"      in : {src[0]} x {src[1]}  ({label}){'  [had alpha]' if had_alpha else ''}")
-            print(f"      out: {TARGET[0]} x {TARGET[1]}  {action}  ->  {dest.name}")
+        # Verify what we actually wrote, rather than trusting the save calls.
+        bad = 0
+        for p in sorted(out_dir.glob("*.png")):
+            with Image.open(p) as im:
+                if im.size != target or im.mode != "RGB":
+                    bad += 1
+                    print(f"    FAIL {p.name}: size={im.size} mode={im.mode}")
+        if bad:
+            print(f"    {bad} file(s) failed verification.")
+            return 1
+        print(f"    {written} file(s) verified at {target[0]}x{target[1]}, RGB, no alpha")
+        print(f"    upload from: {out_dir}\n")
+        total = written
 
-    # Verify what we actually wrote, rather than trusting the save calls.
-    print(f"\nVerifying {written} file(s)...")
-    bad = 0
-    for path in sorted(OUT.glob("*.png")):
-        with Image.open(path) as im:
-            size_ok = im.size == TARGET
-            alpha_ok = im.mode == "RGB"
-            if not (size_ok and alpha_ok):
-                bad += 1
-                print(f"  FAIL {path.name}: size={im.size} mode={im.mode}")
-    if bad == 0:
-        print(f"  All {written} file(s) are exactly {TARGET[0]}x{TARGET[1]}, RGB, no alpha.")
-        print(f"\nUpload from: {OUT}")
-    else:
-        print(f"  {bad} file(s) failed verification.")
-        return 1
-
-    if written > 10:
-        print(f"\nNote: Apple accepts at most 10 screenshots per size class; you have {written}.")
+    if total > 10:
+        print(f"Note: Apple accepts at most 10 screenshots per size class; you have {total}.")
     return 0
 
 
