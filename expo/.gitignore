@@ -54,3 +54,7 @@ store/.demo-credentials
 # finds. `bun.lock` is stale — it still lists @rork-ai/toolkit-sdk and the other
 # dependencies removed for the App Store build — so it must be deleted from the
 # repo (`git rm bun.lock`) or a cloud build will reinstall them.
+
+# Raw device screenshots. Only the processed 6.9" set is worth versioning —
+# run store/prepare-screenshots.py to produce it.
+store/screenshots/raw/

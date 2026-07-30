@@ -74,16 +74,24 @@ Only **one** size class is required, because the app is iPhone-only and portrait
 **6.9″ portrait — 1320 × 2868, or 1290 × 2796, or 1260 × 2736.** Up to 10; Apple downscales for
 every other device.
 
-**Check your iPhone first.** Settings → General → About → Model Name.
+**The phone here is an iPhone 16, which shoots 1179 × 2556** — the 6.1″ class, not the required
+6.9″. Apple validates the pixel dimensions exactly and rejects at the media-ingest step, and the
+Xcode simulator route needs a Mac.
 
-| Your phone | Native screenshot | Covers the required 6.9″ slot? |
-| --- | --- | --- |
-| 17 Pro Max / 16 Pro Max / 15 Pro Max / Air | 1290 × 2796 | **Yes** — shoot on the device |
-| 17 Pro / 16 Pro / 15 Pro / 17 | 1206 × 2622 | No — that's the 6.3″ class |
-| 16 / 15 / 14 | 1179 × 2556 | No |
+The way round it: the two aspect ratios are 2.167939 and 2.167442, a **0.02% difference**. So
+scaling up to exactly 1290 × 2796 needs no crop and no letterbox, and the distortion is far below
+what an eye can resolve. `store/prepare-screenshots.py` does that, and also flattens the alpha
+channel iOS screenshots carry — alpha in an uploaded screenshot is a hard upload failure, not a
+warning.
 
-If your phone isn't a Pro Max, use the iPhone 17 Pro Max simulator in Xcode instead, or upscale is
-**not** an option — Apple validates exact pixel dimensions.
+```bash
+python store/prepare-screenshots.py
+```
+
+Drop the raw shots in `store/screenshots/raw/`, run it, upload from `store/screenshots/6.9/`. It
+prints what size it recognised for each input, what it did, and then re-opens every output to
+confirm it really is 1290 × 2796 in RGB rather than trusting the save. Tested against a synthetic
+1179 × 2556 RGBA input and an already-compliant one.
 
 **Sign in as the demo account to shoot them.** This matters more than it sounds. Its seeded data
 reads as a believable mid-handicap golfer improving — verified live: scoring average **+12** per 18,
