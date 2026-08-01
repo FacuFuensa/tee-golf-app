@@ -234,7 +234,10 @@ async function makeRound({ multiplayer }) {
     ? Array.from({ length: 6 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("")
     : null;
 
-  await supabase.from("rounds").insert({
+  // This is a test helper, not app code: a swallowed error here would leave
+  // `roundId` naming a row that was never created, and every downstream check
+  // would silently be reasoning about nothing. Throw loudly instead.
+  const { error: roundErr } = await supabase.from("rounds").insert({
     id: roundId,
     course_id: courseId,
     owner_id: uid,
@@ -243,10 +246,18 @@ async function makeRound({ multiplayer }) {
     join_code: code,
     started_at: new Date().toISOString(),
   });
-  await supabase.from("round_players").insert({ round_id: roundId, profile_id: uid });
-  await supabase.from("scores").insert(
+  if (roundErr) throw new Error(`could not insert probe round: ${roundErr.message}`);
+
+  const { error: rpErr } = await supabase
+    .from("round_players")
+    .insert({ round_id: roundId, profile_id: uid });
+  if (rpErr) throw new Error(`could not seat owner in probe round: ${rpErr.message}`);
+
+  const { error: scoresErr } = await supabase.from("scores").insert(
     holes.map((h) => ({ round_id: roundId, profile_id: uid, hole_id: h.id, strokes: 4 }))
   );
+  if (scoresErr) throw new Error(`could not insert probe scores: ${scoresErr.message}`);
+
   return { roundId, courseId, code, holeIds: holes.map((h) => h.id) };
 }
 
@@ -310,12 +321,22 @@ async function makeRound({ multiplayer }) {
           ? `raised instead: ${guestFinish.error.message}`
           : `count=${guestFinish.count} (must be 0)`
       );
-      const { data: stillLive } = await guest
+      const { data: stillLive, error: stillLiveErr } = await guest
         .from("rounds").select("finished_at").eq("id", roundId).maybeSingle();
+      // This assertion is a conjunction on purpose: it fails closed (a broken
+      // read reports as "not visible", same as an actual RLS lockout), and it
+      // doubles as proof the guest is still a seated member of this round at
+      // this moment. Do not weaken it to optional chaining. But when the read
+      // itself errors, say so — otherwise every failure here reads as "round
+      // not visible", which points at RLS regardless of the real cause.
       check(
         "and the round is still live for everyone else",
         stillLive != null && stillLive.finished_at == null,
-        stillLive == null ? "round not visible" : `finished_at=${stillLive.finished_at}`
+        stillLiveErr
+          ? `round not visible — ${stillLiveErr.message}`
+          : stillLive == null
+            ? "round not visible"
+            : `finished_at=${stillLive.finished_at}`
       );
 
       // The same write as the owner must actually land — otherwise the check

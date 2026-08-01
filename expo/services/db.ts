@@ -436,10 +436,14 @@ export async function upsertScore(input: UpsertScoreInput): Promise<void> {
   if (error) throw error;
 }
 
-/** Thrown when someone who isn't the round's owner tries to close it out. */
+/**
+ * Thrown when the update in `finishRound` didn't land exactly one row — either
+ * because the caller isn't the round's owner, or because the round no longer
+ * exists.
+ */
 export class NotRoundOwnerError extends Error {
   constructor() {
-    super("Only the round's host can finish it.");
+    super("Only the round's host can finish it — or the round no longer exists.");
     this.name = "NotRoundOwnerError";
   }
 }
@@ -455,6 +459,19 @@ export class NotRoundOwnerError extends Error {
  * for instead of `select()` because the `rounds` SELECT policy resolves
  * membership through a SECURITY DEFINER function, and asking for the row back
  * is the pattern that breaks elsewhere in this file.
+ *
+ * The assertion is on `count !== 1`, not `count === 0`. supabase-js only sets
+ * `count` when the response carries BOTH the `Prefer: count=…` header we send
+ * AND a parseable `content-range` header back — otherwise it stays `null`. And
+ * a wildcard Content-Range header (both the range and the total as literal
+ * asterisks, meaning "unknown") parses via `parseInt` to `NaN`. Neither `null`
+ * nor `NaN` is `=== 0`, so a guard written as `count === 0` fails to fire on
+ * exactly the inputs it exists to catch, silently reporting success again.
+ * The filter is `.eq("id", roundId)` on a primary key, so at most one row can
+ * ever match — asserting the single success value (`1`) is airtight where
+ * asserting the failure value (`0`) is not. Re-finishing an already-finished
+ * round still updates one row (Postgres counts rows matched by the UPDATE
+ * regardless of whether any column value changed), so this stays idempotent.
  */
 export async function finishRound(roundId: string): Promise<void> {
   const { error, count } = await supabase
@@ -462,7 +479,7 @@ export async function finishRound(roundId: string): Promise<void> {
     .update({ finished_at: new Date().toISOString() }, { count: "exact" })
     .eq("id", roundId);
   if (error) throw error;
-  if (count === 0) throw new NotRoundOwnerError();
+  if (count !== 1) throw new NotRoundOwnerError();
 }
 
 /** Live leaderboard ------------------------------------------------------ */
