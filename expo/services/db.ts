@@ -706,3 +706,32 @@ export async function fetchPlayerRounds(profileId: string): Promise<PlayedRound[
   );
   return result;
 }
+
+/**
+ * The golfer's lowest score on each hole of one course, keyed by hole_id.
+ * Excludes the round in progress, so "your best" never means "what you just
+ * wrote down". Hole ids are course-scoped, so this is the same hole at the
+ * same course across every past round.
+ */
+export async function fetchHoleBests(
+  profileId: string,
+  courseId: string,
+  excludeRoundId: string
+): Promise<Record<string, number>> {
+  const { data, error } = await supabase
+    .from("scores")
+    .select("hole_id, strokes, holes!inner(course_id)")
+    .eq("profile_id", profileId)
+    .eq("holes.course_id", courseId)
+    .neq("round_id", excludeRoundId)
+    .gt("strokes", 0);
+  if (error) throw error;
+
+  const rows = (data as unknown as { hole_id: string; strokes: number }[] | null) ?? [];
+  const best: Record<string, number> = {};
+  for (const row of rows) {
+    const current = best[row.hole_id];
+    if (current == null || row.strokes < current) best[row.hole_id] = row.strokes;
+  }
+  return best;
+}

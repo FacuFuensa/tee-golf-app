@@ -30,6 +30,7 @@ import { useAuth } from "@/providers/AuthProvider";
 import { useBlockedPlayers } from "@/providers/BlockedPlayersProvider";
 import { useSettings } from "@/providers/SettingsProvider";
 import {
+  fetchHoleBests,
   fetchLeaderboard,
   fetchRoundBundle,
   finishRound,
@@ -70,6 +71,16 @@ export default function PlayRoundScreen() {
     queryKey: ["round", roundId],
     queryFn: () => fetchRoundBundle(roundId),
     enabled: roundId.length > 0,
+  });
+
+  // Fetched once when the round opens, not per hole. A missing best must never
+  // block play, so failures here are simply absent (see the `?? null` below).
+  const holeBestsQuery = useQuery({
+    queryKey: ["hole-bests", user?.id, bundleQuery.data?.course.id, roundId],
+    queryFn: () =>
+      fetchHoleBests(user?.id ?? "", bundleQuery.data?.course.id ?? "", roundId),
+    enabled: !!user && !!bundleQuery.data?.course.id,
+    staleTime: 5 * 60 * 1000,
   });
 
   const [holeIndex, setHoleIndex] = useState<number>(0);
@@ -364,6 +375,8 @@ export default function PlayRoundScreen() {
   }
 
   const strokes = currentHole ? scores[currentHole.id] ?? 0 : 0;
+  const holeBest = currentHole ? holeBestsQuery.data?.[currentHole.id] ?? null : null;
+  const beatingBest = holeBest != null && strokes > 0 && strokes < holeBest;
 
   const setStrokes = (next: number): void => {
     if (!currentHole) return;
@@ -485,9 +498,13 @@ export default function PlayRoundScreen() {
             {currentHole?.number ?? holeIndex + 1}
             <Text style={styles.holeNavPar}>  ·  Par {currentHole?.par ?? "-"}</Text>
           </Text>
-          {displayYardage != null ? (
+          {displayYardage != null || holeBest != null ? (
             <Text style={styles.holeNavYardage}>
-              {displayYardage} {unitShort(unit)}
+              {displayYardage != null ? `${displayYardage} ${unitShort(unit)}` : ""}
+              {displayYardage != null && holeBest != null ? "  ·  " : ""}
+              {holeBest != null ? (
+                <Text style={beatingBest ? styles.holeNavBest : undefined}>Best {holeBest}</Text>
+              ) : null}
             </Text>
           ) : null}
         </View>
@@ -1534,6 +1551,7 @@ const styles = StyleSheet.create({
   holeNavNumber: { fontSize: 26, fontWeight: "800", color: Colors.primary, marginTop: 2 },
   holeNavPar: { fontSize: 17, fontWeight: "600", color: Colors.textSecondary },
   holeNavYardage: { ...Typography.caption, color: Colors.textTertiary, marginTop: 3 },
+  holeNavBest: { color: Colors.accent, fontWeight: "700" },
   navArrow: {
     width: 52,
     height: 52,
