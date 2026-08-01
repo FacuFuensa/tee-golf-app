@@ -1,6 +1,7 @@
+import * as Sharing from "expo-sharing";
 import { Share2, X } from "lucide-react-native";
 import React, { useRef, useState } from "react";
-import { Alert, Modal, Pressable, ScrollView, Share, StyleSheet, Text, View } from "react-native";
+import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { TeeButton } from "@/components/ui/TeeButton";
@@ -12,10 +13,19 @@ import { tapLight } from "@/utils/haptics";
 import type { ScorecardData } from "@/utils/scorecard";
 
 import { GroupCard } from "./GroupCard";
-import { ScorecardCard } from "./ScorecardCard";
+import { CARD_WIDTH, ScorecardCard } from "./ScorecardCard";
 import { SummaryCard } from "./SummaryCard";
 
 type Format = "scorecard" | "summary" | "group";
+
+// Logical (React Native) height for each format, matching the cards' own
+// dimensions — the sheet needs these to ask capture.ts for a correctly
+// proportioned, consistently-sized export.
+const CARD_HEIGHTS: Record<Format, number> = {
+  scorecard: Math.round(CARD_WIDTH * 1.25),
+  summary: CARD_WIDTH,
+  group: Math.round(CARD_WIDTH * 1.25),
+};
 
 interface ShareRoundSheetProps {
   visible: boolean;
@@ -52,7 +62,7 @@ export function ShareRoundSheet({
 
   const onShare = async (): Promise<void> => {
     setBusy(true);
-    const result = await captureViewToPng(shotRef);
+    const result = await captureViewToPng(shotRef, CARD_WIDTH, CARD_HEIGHTS[format]);
     setBusy(false);
 
     if (result.reason === "unavailable") {
@@ -66,10 +76,20 @@ export function ShareRoundSheet({
       Alert.alert("Couldn't build the image", "Please try again in a moment.");
       return;
     }
+
+    // expo-sharing is built to hand a file to the OS share sheet on both
+    // platforms. RN's own Share.share() drops the `url` option on Android
+    // entirely and has no way to attach a file, so it can't be used here.
+    if (!(await Sharing.isAvailableAsync())) {
+      Alert.alert("Can't share from here", "This device doesn't have a way to share files.");
+      return;
+    }
     try {
-      await Share.share({ url: result.uri });
+      await Sharing.shareAsync(result.uri, { mimeType: "image/png", UTI: "public.png" });
     } catch {
-      // The golfer dismissed the share sheet. Nothing to report.
+      // shareAsync resolves normally when the golfer just dismisses the
+      // sheet — it only rejects on a genuine failure, so this is real.
+      Alert.alert("Couldn't share the scorecard", "Please try again in a moment.");
     }
   };
 
@@ -78,12 +98,16 @@ export function ShareRoundSheet({
       <View style={styles.container}>
         <View style={styles.header}>
           <Text style={styles.title}>Share this round</Text>
-          <Pressable style={styles.close} onPress={onClose} hitSlop={8}>
+          <Pressable style={styles.close} onPress={onClose} hitSlop={8} disabled={busy}>
             <X size={22} color={Colors.primary} strokeWidth={2.4} />
           </Pressable>
         </View>
 
-        <SegmentedControl options={options} value={format} onChange={setFormat} style={styles.tabs} />
+        {/* SegmentedControl has no `disabled` prop and is shared with other
+            screens, so lock it out from the outside instead of changing it. */}
+        <View pointerEvents={busy ? "none" : "auto"}>
+          <SegmentedControl options={options} value={format} onChange={setFormat} style={styles.tabs} />
+        </View>
 
         <ScrollView contentContainerStyle={styles.preview} showsVerticalScrollIndicator={false}>
           <View ref={shotRef} collapsable={false}>

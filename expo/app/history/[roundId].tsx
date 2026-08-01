@@ -50,6 +50,12 @@ export default function RoundDetailScreen() {
     enabled: roundId.length > 0 && isMultiplayer,
   });
 
+  // The Group tab only appears once boardQuery resolves. Sharing while a
+  // multiplayer round's leaderboard is still pending would open the sheet
+  // missing a tab it should have — solo rounds never run this query, so
+  // `isMultiplayer &&` keeps them from being blocked by it.
+  const groupDataPending = isMultiplayer && boardQuery.isPending;
+
   // Only this golfer's scores drive the card; a group round holds everyone's.
   const myScores = useMemo<Record<string, number>>(() => {
     const out: Record<string, number> = {};
@@ -117,11 +123,15 @@ export default function RoundDetailScreen() {
             setSharing(true);
           }}
           hitSlop={8}
-          disabled={!card}
+          disabled={!card || groupDataPending}
           accessibilityRole="button"
           accessibilityLabel="Share this round"
         >
-          <Share2 size={20} color={card ? Colors.primary : Colors.textTertiary} strokeWidth={2.4} />
+          <Share2
+            size={20}
+            color={card && !groupDataPending ? Colors.primary : Colors.textTertiary}
+            strokeWidth={2.4}
+          />
         </Pressable>
       </View>
 

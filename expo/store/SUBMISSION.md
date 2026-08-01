@@ -590,8 +590,9 @@ re-derive this next release — the reasoning is:
   declared types already cover all of it.
 - The shared scorecard image is generated on device and handed to the OS share sheet. The app never
   uploads it, and it never reaches our backend or any third party.
-- `react-native-view-shot`, the one new dependency, is a rendering module. It uses no required-reason
-  API, collects nothing and has no network access.
+- `react-native-view-shot` and `expo-sharing`, the two new dependencies, are a rendering module and a
+  file-sharing wrapper around each platform's native share sheet, respectively. Neither uses a
+  required-reason API, collects anything, or has network access.
 - The group card shows other players' names and scores, but only for players already in a round with
   you, and only when the golfer explicitly selects that tab. That is user-initiated sharing of data
   they already see in the app, not collection.
@@ -610,9 +611,11 @@ cd expo
 npx --yes eas-cli@latest build --platform ios --profile development
 ```
 
-Then share each of the three formats and check: the image is ~1020 px wide, the background is opaque,
-and **an unscored hole is blank, not `0`**. A zero in a scorecard column reads as a real score, and
-this image goes to other people.
+Then share each of the three formats and check: the image is ~1020 px wide (this is now an explicit
+width/height passed to view-shot, not a device-scale coincidence, so it should hold on any device),
+the background is opaque, and **an unscored hole is blank, not `0`**. A zero in a scorecard column
+reads as a real score, and this image goes to other people. Also confirm on Android specifically —
+the share sheet now goes through `expo-sharing`, which is what actually attaches the file there.
 
 ### Version bump
 
