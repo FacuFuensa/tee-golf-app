@@ -195,7 +195,10 @@ export default function PlayRoundScreen() {
     mutationFn: () => finishRound(roundId),
     onSuccess: () => {
       clearActiveRound(roundId);
-      router.back();
+      // Land on the round's own page rather than the tab: it already holds the
+      // hole-by-hole breakdown and the share action, so the just-finished round
+      // and a round from three months ago are the same screen.
+      router.replace(`/history/${roundId}`);
     },
   });
 
