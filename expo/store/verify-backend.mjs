@@ -196,10 +196,145 @@ if (probeCreateErr) {
 
   // Clean up so the probe never shows in the app or blocks the unique index on
   // active join codes.
-  await supabase.from("scores").delete().eq("round_id", probeRoundId);
-  await supabase.from("round_players").delete().eq("round_id", probeRoundId);
-  const { error: cleanupErr } = await supabase.from("rounds").delete().eq("id", probeRoundId);
-  check("probe round cleaned up", cleanupErr == null, cleanupErr?.message);
+  const { data: cleanupResult, error: cleanupErr } = await supabase.rpc("delete_my_round", {
+    p_round_id: probeRoundId,
+  });
+  check(
+    "probe round cleaned up",
+    cleanupErr == null && cleanupResult === "deleted",
+    cleanupErr?.message ?? `returned ${cleanupResult}`
+  );
+}
+
+console.log("\nSingle-round deletion (migration 0013):");
+
+// A helper that builds a real, scored round owned by the demo account.
+async function makeRound({ multiplayer }) {
+  const { data: lib } = await supabase
+    .from("user_courses")
+    .select("course_id")
+    .eq("profile_id", uid)
+    .limit(1);
+  const courseId = lib?.[0]?.course_id;
+  if (!courseId) throw new Error("demo account has no course in its library");
+
+  const { data: holes } = await supabase
+    .from("holes")
+    .select("id")
+    .eq("course_id", courseId)
+    .order("number")
+    .limit(3);
+
+  const roundId = crypto.randomUUID();
+  const code = multiplayer
+    ? Array.from({ length: 6 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"[Math.floor(Math.random() * 32)]).join("")
+    : null;
+
+  await supabase.from("rounds").insert({
+    id: roundId,
+    course_id: courseId,
+    owner_id: uid,
+    format: "stroke",
+    is_multiplayer: multiplayer,
+    join_code: code,
+    started_at: new Date().toISOString(),
+  });
+  await supabase.from("round_players").insert({ round_id: roundId, profile_id: uid });
+  await supabase.from("scores").insert(
+    holes.map((h) => ({ round_id: roundId, profile_id: uid, hole_id: h.id, strokes: 4 }))
+  );
+  return { roundId, courseId, code, holeIds: holes.map((h) => h.id) };
+}
+
+// 1. Solo round deletes completely.
+{
+  const { roundId } = await makeRound({ multiplayer: false });
+  const { data: result, error } = await supabase.rpc("delete_my_round", { p_round_id: roundId });
+  check("solo round returns 'deleted'", error == null && result === "deleted", error?.message ?? `got ${result}`);
+
+  const { count: roundsLeft } = await supabase
+    .from("rounds").select("id", { count: "exact", head: true }).eq("id", roundId);
+  check("solo round row is gone", roundsLeft === 0, `${roundsLeft} row(s) remain`);
+
+  const { count: scoresLeft } = await supabase
+    .from("scores").select("id", { count: "exact", head: true }).eq("round_id", roundId);
+  check("its scores are gone", scoresLeft === 0, `${scoresLeft} score(s) remain`);
+}
+
+// 2 & 3. Group round with a second real player.
+{
+  const { roundId, code, holeIds } = await makeRound({ multiplayer: true });
+
+  const guestEmail = `tee-delete-probe-${Date.now()}@example.com`;
+  const guest = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const signUp = await guest.auth.signUp({ email: guestEmail, password: "TeeProbe!2026x" });
+  if (!signUp.data.session) {
+    check("could create a second player", false, signUp.error?.message ?? "no session returned");
+  } else {
+    const guestId = signUp.data.user.id;
+    await guest.from("profiles").upsert({ id: guestId, display_name: "Probe" });
+    await guest.rpc("join_round_by_code", { p_code: code });
+    await guest.from("scores").insert({
+      round_id: roundId, profile_id: guestId, hole_id: holeIds[0], strokes: 5,
+    });
+
+    // The owner leaves a round another player is seated in.
+    const { data: result, error } = await supabase.rpc("delete_my_round", { p_round_id: roundId });
+    check("group round returns 'left'", error == null && result === "left", error?.message ?? `got ${result}`);
+
+    const { count: mine } = await supabase
+      .from("scores").select("id", { count: "exact", head: true })
+      .eq("round_id", roundId).eq("profile_id", uid);
+    check("the leaver's scores are gone", mine === 0, `${mine} remain`);
+
+    const { count: theirs } = await guest
+      .from("scores").select("id", { count: "exact", head: true })
+      .eq("round_id", roundId).eq("profile_id", guestId);
+    check("the other player's scores survive", theirs === 1, `${theirs} found, expected 1`);
+
+    const { data: after } = await guest.from("rounds").select("owner_id").eq("id", roundId).maybeSingle();
+    check("the round survives for them", after != null, after ? "still there" : "round was destroyed");
+    check(
+      "ownership transferred to the remaining player",
+      after?.owner_id === guestId,
+      `owner_id=${String(after?.owner_id).slice(0, 8)}…`
+    );
+
+    // 4. A non-member gets 'not_found' and changes nothing.
+    const { roundId: privateId } = await makeRound({ multiplayer: false });
+    const { data: denied, error: deniedErr } = await guest.rpc("delete_my_round", { p_round_id: privateId });
+    check("a non-member gets 'not_found'", deniedErr == null && denied === "not_found", deniedErr?.message ?? `got ${denied}`);
+    const { count: survived } = await supabase
+      .from("rounds").select("id", { count: "exact", head: true }).eq("id", privateId);
+    check("and the round they targeted is untouched", survived === 1, `${survived} row(s)`);
+
+    await supabase.rpc("delete_my_round", { p_round_id: privateId });
+    await guest.rpc("delete_my_round", { p_round_id: roundId });
+    await guest.auth.signOut();
+  }
+}
+
+// 5. Anonymous callers are rejected.
+{
+  const anon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { error } = await anon.rpc("delete_my_round", { p_round_id: crypto.randomUUID() });
+  // "some error happened" is not good enough: before the migration is applied
+  // this call also errors, with "could not find the function". Assert the
+  // error is about permission, so the check cannot pass for the wrong reason.
+  const missing = error != null && /could not find|does not exist|schema cache/i.test(error.message);
+  check(
+    "anonymous callers are rejected",
+    error != null && !missing,
+    error == null
+      ? "it succeeded"
+      : missing
+        ? "function not found — migration not applied yet, this check is not meaningful"
+        : error.message.slice(0, 70)
+  );
 }
 
 await supabase.auth.signOut();
