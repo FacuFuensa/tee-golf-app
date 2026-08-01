@@ -34,7 +34,10 @@ export default function RoundDetailScreen() {
   const [sharing, setSharing] = useState(false);
 
   const bundleQuery = useQuery({
-    queryKey: ["round", roundId],
+    // Deliberately its own key, not shared with the play screen's ["round", id]
+    // working copy — that entry can be stale (zeroed scores) right when a
+    // just-finished round lands here. A separate key guarantees a fresh fetch.
+    queryKey: ["round-detail", roundId],
     queryFn: () => fetchRoundBundle(roundId),
     enabled: roundId.length > 0,
   });

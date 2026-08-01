@@ -18,7 +18,6 @@ writeFileSync(
   join(dir, "scorecard.ts"),
   readFileSync("utils/scorecard.ts", "utf8")
     .replace(/import type \{ Hole \} from "@\/types\/models";/, "type Hole = { id: string; course_id: string; number: number; par: number; green_lat: number | null; green_lng: number | null; yardage: number | null };")
-    .replace(/from "\.\/stats"/, 'from "./stats"')
 );
 writeFileSync(
   join(dir, "stats.ts"),

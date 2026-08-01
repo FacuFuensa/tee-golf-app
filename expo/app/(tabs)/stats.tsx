@@ -644,7 +644,9 @@ const styles = StyleSheet.create({
   logHint: { ...Typography.subhead, color: Colors.textTertiary, marginLeft: 2, marginTop: -6 },
   // overflow hidden so the red action is clipped by the card's rounded corners
   logCard: { paddingHorizontal: 0, overflow: "hidden" },
-  logDivider: { height: 1, backgroundColor: Colors.border },
+  // Inset to match logRow's own horizontal padding — the divider is a sibling
+  // of the row, not inside it, so it doesn't inherit that padding automatically.
+  logDivider: { height: 1, backgroundColor: Colors.border, marginHorizontal: Spacing.lg },
   logRow: {
     flexDirection: "row",
     alignItems: "center",

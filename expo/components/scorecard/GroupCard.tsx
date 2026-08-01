@@ -11,14 +11,21 @@ interface GroupCardProps extends CardProps {
   entries: LeaderboardEntry[];
 }
 
+// The card is a fixed height and gets rasterised into a shared image, so a
+// group bigger than this must be truncated rather than silently overflow it.
+const MAX_SHOWN_PLAYERS = 8;
+
 /** One line per player. Rendered only for multiplayer rounds. */
 export function GroupCard({ courseName, date, entries }: GroupCardProps) {
+  const shown = entries.slice(0, MAX_SHOWN_PLAYERS);
+  const overflow = entries.length - shown.length;
+
   return (
     <View style={[styles.root, { width: CARD_WIDTH, height: Math.round(CARD_WIDTH * 1.25) }]}>
       <CardHeader courseName={courseName} date={date} />
 
       <View style={styles.list}>
-        {entries.map((entry, index) => (
+        {shown.map((entry, index) => (
           <View key={entry.profileId} style={[styles.row, index > 0 && styles.rowDivided]}>
             <Text style={styles.position}>{index + 1}</Text>
             <Text style={styles.name} numberOfLines={1}>
@@ -29,6 +36,7 @@ export function GroupCard({ courseName, date, entries }: GroupCardProps) {
             <Text style={styles.toPar}>{formatToPar(entry.toPar)}</Text>
           </View>
         ))}
+        {overflow > 0 ? <Text style={styles.footer}>+{overflow} more</Text> : null}
       </View>
 
       <Text style={styles.footer}>
@@ -44,6 +52,8 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xl,
     padding: Spacing.xl,
     justifyContent: "space-between",
+    // Rasterised into a shared image — nothing may paint past the rounded edge.
+    overflow: "hidden",
   },
   list: { gap: 2 },
   row: { flexDirection: "row", alignItems: "center", paddingVertical: 9, gap: Spacing.sm },

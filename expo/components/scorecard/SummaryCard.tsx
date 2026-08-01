@@ -33,14 +33,16 @@ export function SummaryCard({ courseName, date, card, playerName }: CardProps) {
         </Text>
       </View>
 
-      <View style={styles.breakdown}>
-        {present.map((s) => (
-          <View key={s.key} style={styles.stat}>
-            <Text style={styles.statValue}>{counts[s.key]}</Text>
-            <Text style={styles.statLabel}>{s.label}</Text>
-          </View>
-        ))}
-      </View>
+      {present.length > 0 ? (
+        <View style={styles.breakdown}>
+          {present.map((s) => (
+            <View key={s.key} style={styles.stat}>
+              <Text style={styles.statValue}>{counts[s.key]}</Text>
+              <Text style={styles.statLabel}>{s.label}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
     </View>
   );
 }
