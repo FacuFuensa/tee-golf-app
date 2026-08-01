@@ -34,6 +34,7 @@ import {
   fetchLeaderboard,
   fetchRoundBundle,
   finishRound,
+  NotRoundOwnerError,
   setHoleGreen,
   upsertScore,
 } from "@/services/db";
@@ -116,6 +117,11 @@ export default function PlayRoundScreen() {
   const currentHole = holes[holeIndex];
 
   const isMultiplayer = bundle?.round.is_multiplayer ?? false;
+  // Only the owner can close a round out (`rounds_update_owner`). A joiner is
+  // never the owner, and a solo round's owner is always its only player, so
+  // this is false only while the bundle is still loading — when Finish isn't
+  // reachable anyway.
+  const isOwner = bundle != null && bundle.round.owner_id === user?.id;
   const [showBoard, setShowBoard] = useState<boolean>(false);
   // True when a live multiplayer score write failed and the leaderboard is
   // therefore behind what the golfer sees on their own stepper.
@@ -202,14 +208,38 @@ export default function PlayRoundScreen() {
     },
   });
 
+  // "Finish" means different things depending on whose round it is.
+  //
+  // For the host it closes the round out for everyone — that is the write
+  // `finishRound` performs, and RLS allows it only for them.
+  //
+  // For someone who joined by code it means "I'm done": their scores are
+  // already saved, they stop tracking and leave, and the round stays live for
+  // whoever is still on the course. Calling `finishRound` for them would write
+  // nothing, return no error, and let the app claim it had ended a round that
+  // is still being played — so it simply isn't called.
   const finish = useMutation({
-    mutationFn: () => finishRound(roundId),
+    mutationFn: async () => {
+      if (isOwner) await finishRound(roundId);
+    },
     onSuccess: () => {
       clearActiveRound(roundId);
       // Land on the round's own page rather than the tab: it already holds the
       // hole-by-hole breakdown and the share action, so the just-finished round
       // and a round from three months ago are the same screen.
       router.replace(`/history/${roundId}`);
+    },
+    onError: (error) => {
+      // Belt and braces: `isOwner` should already have kept a joiner out of the
+      // write, so this fires only if ownership changed under us mid-round.
+      const hostOnly = error instanceof NotRoundOwnerError;
+      setExitPrompt(null);
+      Alert.alert(
+        hostOnly ? "Only the host can finish this round" : "Couldn't finish the round",
+        hostOnly
+          ? "Your scores are saved. Ask whoever started the round to close it out."
+          : "Your scores are saved. Please try again in a moment."
+      );
     },
   });
 
@@ -664,6 +694,7 @@ export default function PlayRoundScreen() {
         mode={exitPrompt}
         busy={exitBusy}
         played={summary.played}
+        isOwner={isOwner}
         onSave={onSaveProgress}
         onDiscard={onDiscardProgress}
         onCancel={() => setExitPrompt(null)}
@@ -697,6 +728,7 @@ function ExitPrompt({
   mode,
   busy,
   played,
+  isOwner,
   onSave,
   onDiscard,
   onCancel,
@@ -704,6 +736,8 @@ function ExitPrompt({
   mode: null | "close" | "finish";
   busy: boolean;
   played: number;
+  /** False only for someone who joined a group round by code. */
+  isOwner: boolean;
   onSave: () => void;
   onDiscard: () => void;
   onCancel: () => void;
@@ -711,12 +745,17 @@ function ExitPrompt({
   const insets = useSafeAreaInsets();
   const visible = mode !== null;
   const isFinish = mode === "finish";
-  const title = isFinish ? "Finish round?" : "Save your progress?";
+  // A joiner ends only their own round, so say that rather than implying they
+  // are closing the round out for the group — which they cannot do.
+  const title = isFinish ? (isOwner ? "Finish round?" : "Finish your round?") : "Save your progress?";
+  const holeCount = `${played} ${played === 1 ? "hole" : "holes"}`;
   const body =
     played > 0
       ? isFinish
-        ? `You've played ${played} ${played === 1 ? "hole" : "holes"}. Save this round to your history and stats?`
-        : `You've played ${played} ${played === 1 ? "hole" : "holes"}. Keep this progress so you can pick it back up?`
+        ? isOwner
+          ? `You've played ${holeCount}. Save this round to your history and stats?`
+          : `You've played ${holeCount}. Save it to your history and stats? The round stays open for the other players.`
+        : `You've played ${holeCount}. Keep this progress so you can pick it back up?`
       : "You haven't scored any holes yet.";
 
   return (

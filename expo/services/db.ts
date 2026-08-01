@@ -436,12 +436,33 @@ export async function upsertScore(input: UpsertScoreInput): Promise<void> {
   if (error) throw error;
 }
 
+/** Thrown when someone who isn't the round's owner tries to close it out. */
+export class NotRoundOwnerError extends Error {
+  constructor() {
+    super("Only the round's host can finish it.");
+    this.name = "NotRoundOwnerError";
+  }
+}
+
+/**
+ * Close out a round. Owner-only: `rounds_update_owner` gates this to
+ * `owner_id = auth.uid()`.
+ *
+ * The count is not decoration. A non-owner's update matches zero rows and
+ * returns NO error, so `error == null` is not evidence that anything happened —
+ * the app used to treat that silence as success and tell a joiner their group
+ * round was finished while it stayed live for everyone else. `count` is asked
+ * for instead of `select()` because the `rounds` SELECT policy resolves
+ * membership through a SECURITY DEFINER function, and asking for the row back
+ * is the pattern that breaks elsewhere in this file.
+ */
 export async function finishRound(roundId: string): Promise<void> {
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("rounds")
-    .update({ finished_at: new Date().toISOString() })
+    .update({ finished_at: new Date().toISOString() }, { count: "exact" })
     .eq("id", roundId);
   if (error) throw error;
+  if (count === 0) throw new NotRoundOwnerError();
 }
 
 /** Live leaderboard ------------------------------------------------------ */
