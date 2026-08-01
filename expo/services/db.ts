@@ -36,22 +36,65 @@ export async function createProfile(
 /** Courses + holes ------------------------------------------------------- */
 
 /**
+ * Centroid of every pinned green in `points`, or null when none are pinned.
+ * Unpinned holes are dropped rather than treated as (0, 0), so a
+ * partially-mapped course still anchors on its real greens.
+ */
+function centroidOfGreens(
+  points: { lat: number | null; lng: number | null }[]
+): { latitude: number; longitude: number } | null {
+  const pinned = points.filter(
+    (p): p is { lat: number; lng: number } => p.lat != null && p.lng != null
+  );
+  if (pinned.length === 0) return null;
+  return {
+    latitude: pinned.reduce((sum, p) => sum + p.lat, 0) / pinned.length,
+    longitude: pinned.reduce((sum, p) => sum + p.lng, 0) / pinned.length,
+  };
+}
+
+/**
+ * A saved course plus a fallback location for when `latitude`/`longitude` is
+ * null — every catalog import (GolfCourseAPI supplies no coordinates, and
+ * forward-geocoding can fail) and every hand-mapped course saved before this
+ * fix landed. `greenCentroid` is populated far more often, since a course is
+ * barely playable until at least one green is pinned.
+ */
+export interface CourseWithGreenCentroid extends Course {
+  greenCentroid: { latitude: number; longitude: number } | null;
+}
+
+/**
  * The courses the given golfer has saved to their own library. Courses live in
  * a shared catalog, but each golfer picks which ones appear in their list via
  * the `user_courses` membership table — so two accounts can independently save
  * the same shared course, and one account's list never leaks into another's.
+ *
+ * Holes are embedded (rather than fetched separately) to compute each course's
+ * green centroid in the same round trip — see `CourseWithGreenCentroid`.
  */
-export async function fetchCourses(userId: string): Promise<Course[]> {
+export async function fetchCourses(userId: string): Promise<CourseWithGreenCentroid[]> {
   const { data, error } = await supabase
     .from("user_courses")
-    .select("created_at, course:courses(*)")
+    .select("created_at, course:courses(*, holes(number, green_lat, green_lng))")
     .eq("profile_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
-  const rows = (data as unknown as { course: Course | Course[] | null }[] | null) ?? [];
+
+  type HoleGreen = { number: number; green_lat: number | null; green_lng: number | null };
+  type CourseRow = Course & { holes: HoleGreen[] | null };
+  const rows = (data as unknown as { course: CourseRow | CourseRow[] | null }[] | null) ?? [];
+
   return rows
     .map((r) => (Array.isArray(r.course) ? r.course[0] ?? null : r.course))
-    .filter((c): c is Course => c != null);
+    .filter((c): c is CourseRow => c != null)
+    .map((c): CourseWithGreenCentroid => {
+      const { holes, ...course } = c;
+      const greenCentroid = centroidOfGreens(
+        (holes ?? []).map((h) => ({ lat: h.green_lat, lng: h.green_lng }))
+      );
+      return { ...course, greenCentroid };
+    });
 }
 
 /** Add a (shared) course to the golfer's own library. Idempotent. */
@@ -135,6 +178,14 @@ export interface NewCourseInput {
 export async function createCourseWithHoles(
   input: NewCourseInput
 ): Promise<Course> {
+  // Unlike a catalog import, every green is placed before this is ever called
+  // (app/course/new.tsx walks the golfer through pinning each hole), so a real
+  // location is available immediately — no need to wait on geocoding or fall
+  // back to the green centroid at read time the way `fetchCourses` does.
+  const anchor = centroidOfGreens(
+    input.holes.map((h) => ({ lat: h.green_lat, lng: h.green_lng }))
+  );
+
   const { data: course, error } = await supabase
     .from("courses")
     .insert({
@@ -143,6 +194,8 @@ export async function createCourseWithHoles(
       country: input.country,
       created_by: input.createdBy,
       source: "user",
+      latitude: anchor?.latitude ?? null,
+      longitude: anchor?.longitude ?? null,
     })
     .select()
     .single();

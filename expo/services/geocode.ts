@@ -33,10 +33,18 @@ interface Coordinates {
 /** Geocoding the same course twice in a session is wasted work. */
 const cache = new Map<string, Coordinates | null>();
 
+const clean = (v: string | null | undefined): string | null => {
+  const t = v?.trim();
+  return t && t.length > 0 ? t : null;
+};
+
 /**
- * Builds the most specific query the address parts allow. A full street address
- * resolves to the clubhouse; falling back to "city, state, country" still lands
- * within a few kilometres, which is close enough to anchor a map.
+ * Builds the most specific query the address parts allow. A street address is
+ * composed WITH the city/state/country, not used alone — a bare street address
+ * ("100 Main St") is ambiguous across thousands of towns, and Apple's geocoder
+ * needs the locality to disambiguate it. Falling back to "city, state, country"
+ * (see `buildLocalityQuery`) still lands within a few kilometres, which is
+ * close enough to anchor a map.
  */
 function buildQuery(parts: {
   address?: string | null;
@@ -45,23 +53,54 @@ function buildQuery(parts: {
   country?: string | null;
   name?: string | null;
 }): string | null {
-  const clean = (v: string | null | undefined): string | null => {
-    const t = v?.trim();
-    return t && t.length > 0 ? t : null;
-  };
-
   const address = clean(parts.address);
-  if (address) return address;
+  const locality = buildLocalityQuery(parts);
 
-  const locality = [clean(parts.city), clean(parts.state), clean(parts.country)]
-    .filter(Boolean)
-    .join(", ");
-  if (locality.length === 0) return null;
+  if (address) return locality ? `${address}, ${locality}` : address;
+  if (!locality) return null;
 
   // With no street address, pairing the course name with the locality gives the
   // geocoder a chance to find the club itself rather than the town centre.
   const name = clean(parts.name);
   return name ? `${name}, ${locality}` : locality;
+}
+
+/** "City, state, country" alone — the fallback query when the fuller one above
+ * finds nothing. Some geocoders fail an address they can't match exactly
+ * rather than degrading gracefully to the town it's in. */
+function buildLocalityQuery(parts: {
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
+}): string | null {
+  const locality = [clean(parts.city), clean(parts.state), clean(parts.country)]
+    .filter(Boolean)
+    .join(", ");
+  return locality.length > 0 ? locality : null;
+}
+
+/**
+ * Runs one geocode query through the cache. A thrown exception is NOT cached:
+ * expo-location's own docs on `geocodeAsync` warn that "creating too many
+ * requests at a time can result in an error" (see
+ * node_modules/expo-location/build/Location.js), so a throw here is usually a
+ * transient throttle, not proof the address doesn't exist. Caching it as a
+ * permanent null used to poison that query for the rest of the app's process
+ * lifetime. Only a genuinely empty RESULT (the API answered, with nothing) is
+ * cached.
+ */
+async function runGeocode(query: string): Promise<Coordinates | null> {
+  const cached = cache.get(query);
+  if (cached !== undefined) return cached;
+
+  const results = await Location.geocodeAsync(query);
+  const first = results[0];
+  const resolved =
+    first && typeof first.latitude === "number" && typeof first.longitude === "number"
+      ? { latitude: first.latitude, longitude: first.longitude }
+      : null;
+  cache.set(query, resolved);
+  return resolved;
 }
 
 /**
@@ -79,22 +118,22 @@ export async function geocodeCourse(parts: {
   const query = buildQuery(parts);
   if (!query) return null;
 
-  const cached = cache.get(query);
-  if (cached !== undefined) return cached;
+  try {
+    const resolved = await runGeocode(query);
+    if (resolved) return resolved;
+  } catch {
+    // Geocoding is unavailable on web and can fail offline. Fall through to
+    // the locality retry below rather than giving up immediately.
+  }
+
+  // The composed query found nothing (or errored) — retry once with the
+  // locality alone, in case the fuller address was what tripped it up.
+  const localityQuery = buildLocalityQuery(parts);
+  if (!localityQuery || localityQuery === query) return null;
 
   try {
-    const results = await Location.geocodeAsync(query);
-    const first = results[0];
-    const resolved =
-      first && typeof first.latitude === "number" && typeof first.longitude === "number"
-        ? { latitude: first.latitude, longitude: first.longitude }
-        : null;
-    cache.set(query, resolved);
-    return resolved;
+    return await runGeocode(localityQuery);
   } catch {
-    // Geocoding is unavailable on web and can fail offline. Cache the miss so we
-    // don't retry it on every render.
-    cache.set(query, null);
     return null;
   }
 }

@@ -78,6 +78,39 @@ check(
   (holes ?? []).every((h) => h.green_lat != null && h.green_lng != null)
 );
 
+console.log("\nLocation fallback must have data to work with (round 8 fix):");
+
+// Read-only: re-runs the same embedded-holes shape fetchCourses() now uses
+// (services/db.ts) and reports, per course, what a golfer's device would see —
+// the course's own latitude/longitude, and how many of its holes have a
+// pinned green. Proves the fallback (green centroid) has something to fall
+// back TO, without writing anything.
+const { data: libraryWithHoles } = await supabase
+  .from("user_courses")
+  .select("course:courses(id, name, latitude, longitude, holes(green_lat, green_lng))")
+  .eq("profile_id", uid);
+const coursesForLocation = (libraryWithHoles ?? [])
+  .map((r) => (Array.isArray(r.course) ? r.course[0] : r.course))
+  .filter(Boolean);
+
+let everyCourseResolvable = true;
+for (const c of coursesForLocation) {
+  const holesList = c.holes ?? [];
+  const pinned = holesList.filter((h) => h.green_lat != null && h.green_lng != null);
+  const hasOwnPoint = c.latitude != null && c.longitude != null;
+  const resolvable = hasOwnPoint || pinned.length > 0;
+  if (!resolvable) everyCourseResolvable = false;
+  console.log(
+    `    ${c.name}: latitude=${c.latitude ?? "null"} longitude=${c.longitude ?? "null"} ` +
+      `greens-pinned=${pinned.length}/${holesList.length} -> ${resolvable ? "resolvable" : "UNRESOLVABLE"}`
+  );
+}
+check(
+  "Every course in the library resolves to a point (own lat/lng, or a pinned-green centroid)",
+  coursesForLocation.length > 0 && everyCourseResolvable,
+  `${coursesForLocation.length} course(s) checked`
+);
+
 const { data: myScores } = await supabase.from("scores").select("*").eq("profile_id", uid);
 check("Stats tab has scores to read", (myScores ?? []).length > 0, `${(myScores ?? []).length} rows`);
 

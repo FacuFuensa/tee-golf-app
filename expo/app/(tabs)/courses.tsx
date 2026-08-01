@@ -36,6 +36,7 @@ import {
   joinRoundByCode,
   removeCourseFromLibrary,
   upsertScore,
+  type CourseWithGreenCentroid,
 } from "@/services/db";
 import {
   courseDisplayName,
@@ -54,8 +55,47 @@ import { notifySuccess, tapMedium } from "@/utils/haptics";
 import { useMutation } from "@tanstack/react-query";
 
 interface CourseWithDistance {
-  course: Course;
+  course: CourseWithGreenCentroid;
   meters: number | null;
+}
+
+/**
+ * The course's own point when known, otherwise the centroid of its pinned
+ * greens. This fallback is what lets a catalog import (GolfCourseAPI never
+ * supplies coordinates) or a hand-mapped course saved before this fix still
+ * get a distance and be eligible for "closest to you".
+ */
+function resolvedPoint(
+  course: CourseWithGreenCentroid
+): { latitude: number; longitude: number } | null {
+  if (course.latitude != null && course.longitude != null) {
+    return { latitude: course.latitude, longitude: course.longitude };
+  }
+  return course.greenCentroid;
+}
+
+/**
+ * Runs `fn` over `items` with at most `limit` in flight at once. expo-location's
+ * own docs on geocodeAsync warn that "creating too many requests at a time can
+ * result in an error" (node_modules/expo-location/build/Location.js) — a plain
+ * `Promise.all` here used to fire up to 6 of these concurrently.
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next;
+      next += 1;
+      results[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 export default function CoursesScreen() {
@@ -71,7 +111,7 @@ export default function CoursesScreen() {
   const coursesQuery = useQuery({
     queryKey: ["courses", user?.id],
     queryFn: () => {
-      if (!user) return Promise.resolve([] as Course[]);
+      if (!user) return Promise.resolve([] as CourseWithGreenCentroid[]);
       return fetchCourses(user.id);
     },
     enabled: isConfigured && !!user,
@@ -214,15 +254,15 @@ export default function CoursesScreen() {
     onMutate: async (courseId: string) => {
       const key = ["courses", user?.id];
       await queryClient.cancelQueries({ queryKey: key });
-      const prev = queryClient.getQueryData<Course[]>(key);
-      queryClient.setQueryData<Course[]>(
+      const prev = queryClient.getQueryData<CourseWithGreenCentroid[]>(key);
+      queryClient.setQueryData<CourseWithGreenCentroid[]>(
         key,
         (old) => (old ?? []).filter((c) => c.id !== courseId)
       );
       return { prev };
     },
     onError: (_error, _courseId, context) => {
-      const ctx = context as { prev?: Course[] } | undefined;
+      const ctx = context as { prev?: CourseWithGreenCentroid[] } | undefined;
       if (ctx?.prev) queryClient.setQueryData(["courses", user?.id], ctx.prev);
       Alert.alert("Couldn't remove the course", "Please try again in a moment.");
     },
@@ -236,21 +276,27 @@ export default function CoursesScreen() {
     removeCourse.mutate(course.id);
   };
 
-  const courses = useMemo<Course[]>(() => coursesQuery.data ?? [], [coursesQuery.data]);
+  const courses = useMemo<CourseWithGreenCentroid[]>(() => coursesQuery.data ?? [], [coursesQuery.data]);
 
   // Attach a great-circle distance to each course, sorting the nearest first
   // whenever we have a GPS fix. Courses without a known location sink to the
-  // bottom (still alphabetical-ish via their original order).
+  // bottom, broken alphabetically rather than left in whatever order they
+  // happened to arrive in (two nulls used to compare equal, which is not a
+  // stable sort — matches how fetchLeaderboard breaks its own ties).
   const ranked = useMemo<CourseWithDistance[]>(() => {
     const withDistance = courses.map((course): CourseWithDistance => {
+      const point = resolvedPoint(course);
       const meters =
-        coords && course.latitude != null && course.longitude != null
-          ? haversineMeters(coords.latitude, coords.longitude, course.latitude, course.longitude)
+        coords && point
+          ? haversineMeters(coords.latitude, coords.longitude, point.latitude, point.longitude)
           : null;
       return { course, meters };
     });
     if (!coords) return withDistance;
     return [...withDistance].sort((a, b) => {
+      if (a.meters == null && b.meters == null) {
+        return a.course.name.localeCompare(b.course.name);
+      }
       if (a.meters == null) return 1;
       if (b.meters == null) return -1;
       return a.meters - b.meters;
@@ -324,27 +370,26 @@ export default function CoursesScreen() {
         .filter((c) => !savedExternalIds.has(String(c.id)) && courseHoleCount(c) > 0)
         .slice(0, 6);
 
-      const located = await Promise.all(
-        candidates.map(async (course) => {
-          const point = await geocodeCourse({
-            address: course.location?.address,
-            city: course.location?.city,
-            state: course.location?.state,
-            country: course.location?.country,
-            name: courseDisplayName(course),
-          });
-          if (!point) return null;
-          return {
-            course,
-            meters: haversineMeters(
-              coords.latitude,
-              coords.longitude,
-              point.latitude,
-              point.longitude
-            ),
-          };
-        })
-      );
+      // At most 3 in flight at once — see mapWithConcurrency's doc comment.
+      const located = await mapWithConcurrency(candidates, 3, async (course) => {
+        const point = await geocodeCourse({
+          address: course.location?.address,
+          city: course.location?.city,
+          state: course.location?.state,
+          country: course.location?.country,
+          name: courseDisplayName(course),
+        });
+        if (!point) return null;
+        return {
+          course,
+          meters: haversineMeters(
+            coords.latitude,
+            coords.longitude,
+            point.latitude,
+            point.longitude
+          ),
+        };
+      });
       return located.filter((x): x is { course: GolfApiCourse; meters: number } => x != null);
     },
   });
