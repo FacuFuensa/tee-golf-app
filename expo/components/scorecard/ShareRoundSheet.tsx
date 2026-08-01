@@ -116,13 +116,7 @@ export function ShareRoundSheet({
             ) : format === "summary" ? (
               <SummaryCard courseName={courseName} date={date} card={card} playerName={playerName} />
             ) : (
-              <GroupCard
-                courseName={courseName}
-                date={date}
-                card={card}
-                playerName={playerName}
-                entries={entries}
-              />
+              <GroupCard courseName={courseName} date={date} entries={entries} />
             )}
           </View>
         </ScrollView>

@@ -9,20 +9,17 @@ import { ShareRoundSheet } from "@/components/scorecard/ShareRoundSheet";
 import { TeeButton } from "@/components/ui/TeeButton";
 import { TeeCard } from "@/components/ui/TeeCard";
 import { Colors, Fonts, Radius, Spacing, Typography, hairline } from "@/constants/theme";
+import { useActiveRound } from "@/providers/ActiveRoundProvider";
 import { useAuth } from "@/providers/AuthProvider";
-import { deleteMyRound, fetchLeaderboard, fetchRoundBundle } from "@/services/db";
+import { useBlockedPlayers } from "@/providers/BlockedPlayersProvider";
+import { deleteMyRound, fetchLeaderboard, fetchRoundBundle, type LeaderboardEntry } from "@/services/db";
 import { buildScorecard, type ScorecardCell } from "@/utils/scorecard";
-import { classifyHole, formatToPar, type ScoreClass } from "@/utils/stats";
+import { classifyHole, formatToPar, SCORE_CLASS_COLORS } from "@/utils/stats";
 import { notifySuccess, tapLight } from "@/utils/haptics";
 
-const CLASS_COLORS: Record<ScoreClass, string> = {
-  eagle: "#C7A24A",
-  birdie: "#4E8C6A",
-  par: "#1C3A2B",
-  bogey: "#9BA59C",
-  double: "#B0463B",
-  triple: "#6E2F28",
-};
+// Shared with the Stats tab so the same score always reads as the same
+// colour everywhere — see utils/stats.ts.
+const CLASS_COLORS = SCORE_CLASS_COLORS;
 
 export default function RoundDetailScreen() {
   const insets = useSafeAreaInsets();
@@ -30,6 +27,8 @@ export default function RoundDetailScreen() {
   const { roundId: param } = useLocalSearchParams<{ roundId: string }>();
   const roundId = typeof param === "string" ? param : "";
   const { user, profile } = useAuth();
+  const { isBlocked } = useBlockedPlayers();
+  const { clearActiveRound } = useActiveRound();
   const queryClient = useQueryClient();
   const [sharing, setSharing] = useState(false);
 
@@ -56,6 +55,14 @@ export default function RoundDetailScreen() {
   // `isMultiplayer &&` keeps them from being blocked by it.
   const groupDataPending = isMultiplayer && boardQuery.isPending;
 
+  // Filtered once and reused for both the Players card and the ShareRoundSheet
+  // export — a blocked player must never surface here, matching how
+  // app/round/[id].tsx applies the same filter to its own leaderboard.
+  const players = useMemo<LeaderboardEntry[]>(
+    () => (boardQuery.data ?? []).filter((p) => !isBlocked(p.profileId)),
+    [boardQuery.data, isBlocked]
+  );
+
   // Only this golfer's scores drive the card; a group round holds everyone's.
   const myScores = useMemo<Record<string, number>>(() => {
     const out: Record<string, number> = {};
@@ -74,10 +81,27 @@ export default function RoundDetailScreen() {
     mutationFn: () => deleteMyRound(roundId),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["player-rounds"] });
+      // This screen's own cached copies, plus the play screen's working copy
+      // and its live leaderboard — all now point at a round that fails
+      // rounds_select_member, so they must not linger as stale reads.
+      queryClient.removeQueries({ queryKey: ["round-detail", roundId] });
+      queryClient.removeQueries({ queryKey: ["round", roundId] });
+      queryClient.removeQueries({ queryKey: ["leaderboard", roundId] });
+      // Also drop the "round in progress" banner if it pointed at this round,
+      // so Resume can't land on a round that no longer exists for this player.
+      clearActiveRound(roundId);
       if (result === "not_found") {
         Alert.alert("Round not found", "This round is no longer in your history.");
       } else {
         notifySuccess();
+        // 'left' is the surprising outcome — the round didn't vanish, it just
+        // isn't yours anymore. 'deleted' is the ordinary case and stays silent.
+        if (result === "left") {
+          Alert.alert(
+            "You left the round",
+            "Your scores were removed. It stays in the other players' history."
+          );
+        }
       }
       router.back();
     },
@@ -170,7 +194,8 @@ export default function RoundDetailScreen() {
               <View style={styles.nineHeader}>
                 <Text style={styles.nineLabel}>{nine.label}</Text>
                 <Text style={styles.nineTotals}>
-                  {nine.strokes} · par {nine.par}
+                  {/* — rather than a false 0 when this nine wasn't played at all */}
+                  {nine.strokes ?? "—"} · par {nine.par}
                 </Text>
               </View>
               {nine.cells.map((cell) => (
@@ -179,13 +204,13 @@ export default function RoundDetailScreen() {
             </TeeCard>
           ))}
 
-          {isMultiplayer && (boardQuery.data?.length ?? 0) > 0 ? (
+          {isMultiplayer && players.length > 0 ? (
             <TeeCard style={styles.nineCard}>
               <View style={styles.nineHeader}>
                 <Users size={15} color={Colors.primary} strokeWidth={2.6} />
                 <Text style={styles.nineLabel}>Players</Text>
               </View>
-              {(boardQuery.data ?? []).map((entry) => (
+              {players.map((entry) => (
                 <View key={entry.profileId} style={styles.playerRow}>
                   <Text style={styles.playerName} numberOfLines={1}>
                     {entry.name}
@@ -217,7 +242,7 @@ export default function RoundDetailScreen() {
           date={bundleQuery.data.round.finished_at ?? bundleQuery.data.round.started_at}
           card={card}
           playerName={profile?.display_name ?? "You"}
-          entries={isMultiplayer ? boardQuery.data ?? [] : []}
+          entries={isMultiplayer ? players : []}
         />
       ) : null}
     </View>

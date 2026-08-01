@@ -94,6 +94,49 @@ console.log("\nA partial round — the case that must not lie:");
   check("course par still reflects the whole course", card.coursePar === 72, `${card.coursePar}`);
 }
 
+console.log("\nOnly the back nine played — OUT must be blank, not a lying 0:");
+{
+  const h = holes(18);
+  const scores = {};
+  for (let i = 9; i < 18; i++) scores[`h${i + 1}`] = 4;
+  const card = buildScorecard(h, scores);
+  check("the unplayed nine (OUT) is null, not 0", card.nines[0].strokes === null, String(card.nines[0].strokes));
+  check("the played nine (IN) is its real total", card.nines[1].strokes === 36, `${card.nines[1].strokes}`);
+}
+
+console.log("\nOnly the front nine played — IN must be blank, not a lying 0:");
+{
+  const h = holes(18);
+  const scores = {};
+  for (let i = 0; i < 9; i++) scores[`h${i + 1}`] = 5;
+  const card = buildScorecard(h, scores);
+  check("the played nine (OUT) is its real total", card.nines[0].strokes === 45, `${card.nines[0].strokes}`);
+  check("the unplayed nine (IN) is null, not 0", card.nines[1].strokes === null, String(card.nines[1].strokes));
+}
+
+console.log("\nTwenty-seven holes — chunked by 9, not first-9/rest:");
+{
+  const h = holes(27);
+  const scores = Object.fromEntries(h.map((x) => [x.id, 4]));
+  const card = buildScorecard(h, scores);
+  check("produces three nines", card.nines.length === 3, `${card.nines.length}`);
+  check(
+    "each nine holds exactly 9 cells",
+    card.nines.every((n) => n.cells.length === 9),
+    card.nines.map((n) => n.cells.length).join(",")
+  );
+  check(
+    "labelled OUT, IN, NINE 3",
+    card.nines.map((n) => n.label).join(",") === "OUT,IN,NINE 3",
+    card.nines.map((n) => n.label).join(",")
+  );
+  check(
+    "the third nine holds holes 19-27",
+    card.nines[2].cells.map((c) => c.number).join(",") === "19,20,21,22,23,24,25,26,27",
+    card.nines[2].cells.map((c) => c.number).join(",")
+  );
+}
+
 console.log("\nOrdering and classification:");
 {
   const h = holes(3, [3, 5, 4]).reverse();

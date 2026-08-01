@@ -26,10 +26,6 @@ try {
   captureRef = null;
 }
 
-export function isCaptureAvailable(): boolean {
-  return captureRef != null;
-}
-
 // Pixels per logical point in the export, independent of the exporting
 // device's own screen scale — chosen to look sharp on a 3x device without
 // ballooning the file on a 2x one.
@@ -62,7 +58,22 @@ export async function captureViewToPng(
       Platform.OS === "ios"
         ? { width: targetWidth / PixelRatio.get(), height: targetHeight / PixelRatio.get() }
         : { width: Math.round(targetWidth), height: Math.round(targetHeight) };
-    const uri = await captureRef(ref, { format: "png", quality: 1, result: "tmpfile", ...size });
+    const uri = await captureRef(ref, {
+      format: "png",
+      quality: 1,
+      result: "tmpfile",
+      // iOS's default path (drawViewHierarchyInRect:afterScreenUpdates:) is
+      // documented by the library itself as unreliable for large views — it
+      // can report success while returning a blank image. The capture target
+      // here is a card taller than some small-iPhone viewports, sitting in a
+      // ScrollView, so it can be partially off-screen exactly when that
+      // failure mode triggers. renderInContext draws the layer directly
+      // instead of relying on what's on-screen. Its documented trade-off is
+      // losing gradients/scrollview content, which doesn't apply — the cards
+      // are solid-colour, non-scrolling views. No-op on Android.
+      useRenderInContext: true,
+      ...size,
+    });
     return { uri, reason: null };
   } catch {
     return { uri: null, reason: "failed" };

@@ -5,9 +5,14 @@ import { Colors, Fonts, Radius, Spacing, hairline } from "@/constants/theme";
 import type { LeaderboardEntry } from "@/services/db";
 import { formatToPar } from "@/utils/stats";
 
-import { CARD_WIDTH, CardHeader, type CardProps } from "./ScorecardCard";
+import { CARD_WIDTH, CardHeader } from "./ScorecardCard";
 
-interface GroupCardProps extends CardProps {
+// Only what this card actually renders — it used to extend CardProps and
+// require `card`/`playerName` that it never read.
+interface GroupCardProps {
+  courseName: string;
+  /** ISO timestamp. */
+  date: string;
   entries: LeaderboardEntry[];
 }
 
@@ -32,8 +37,10 @@ export function GroupCard({ courseName, date, entries }: GroupCardProps) {
               {entry.name}
             </Text>
             <Text style={styles.thru}>thru {entry.thru}</Text>
-            <Text style={styles.total}>{entry.total}</Text>
-            <Text style={styles.toPar}>{formatToPar(entry.toPar)}</Text>
+            {/* A seated player with zero scored holes has no score to report —
+                printing 0/Even would attach a fabricated round to their name. */}
+            <Text style={styles.total}>{entry.thru === 0 ? "—" : entry.total}</Text>
+            <Text style={styles.toPar}>{entry.thru === 0 ? "—" : formatToPar(entry.toPar)}</Text>
           </View>
         ))}
         {overflow > 0 ? <Text style={styles.footer}>+{overflow} more</Text> : null}

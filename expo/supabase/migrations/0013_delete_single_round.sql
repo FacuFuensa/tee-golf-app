@@ -31,19 +31,32 @@ begin
     raise exception 'not authenticated' using errcode = '28000';
   end if;
 
+  -- Serialise concurrent deletes of the same round. Under READ COMMITTED, two
+  -- members deleting at once would each pass the "others seated" check below
+  -- before either delete is committed, so both would see the other's row and
+  -- both would return 'left' — leaving a round with zero seats that nobody
+  -- can reach or delete. Locking the round row makes the second caller wait
+  -- for the first to commit, so it observes the post-delete state instead.
+  perform 1 from public.rounds where id = p_round_id for update;
+
   select exists (
     select 1 from public.round_players
     where round_id = p_round_id and profile_id = uid
   ) into v_is_member;
 
-  -- Deliberately does not distinguish "no such round" from "not yours", so a
-  -- caller cannot probe for other people's rounds.
-  if not v_is_member then
-    return 'not_found';
-  end if;
-
   select (owner_id = uid) into v_is_owner
     from public.rounds where id = p_round_id;
+
+  -- Membership mirrors is_round_member() used everywhere else in the schema:
+  -- owner OR seated. Checking round_players alone let an owner with no seat
+  -- read the round and write scores to it (via is_round_member) but never
+  -- delete it — this always returned 'not_found' while the round stayed
+  -- visible with no way to remove it. Deliberately does not distinguish
+  -- "no such round" from "not yours", so a caller cannot probe for other
+  -- people's rounds.
+  if not v_is_member and not coalesce(v_is_owner, false) then
+    return 'not_found';
+  end if;
 
   delete from public.scores
    where round_id = p_round_id and profile_id = uid;

@@ -15,7 +15,8 @@ export interface CardProps {
   playerName: string;
 }
 
-export function formatCardDate(iso: string): string {
+// Used only within this module (CardHeader) — not exported.
+function formatCardDate(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
@@ -97,7 +98,8 @@ export function ScorecardCard({ courseName, date, card, playerName }: CardProps)
                   {c.strokes ?? ""}
                 </Text>
               ))}
-              <Text style={styles.cellTotal}>{nine.strokes}</Text>
+              {/* blank, never 0 — an unplayed nine must not print an even-par subtotal */}
+              <Text style={styles.cellTotal}>{nine.strokes ?? ""}</Text>
             </View>
           </View>
         ))}

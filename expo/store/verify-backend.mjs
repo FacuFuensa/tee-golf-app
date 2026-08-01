@@ -218,12 +218,16 @@ async function makeRound({ multiplayer }) {
   const courseId = lib?.[0]?.course_id;
   if (!courseId) throw new Error("demo account has no course in its library");
 
-  const { data: holes } = await supabase
+  const { data: holes, error: holesErr } = await supabase
     .from("holes")
     .select("id")
     .eq("course_id", courseId)
     .order("number")
     .limit(3);
+  // A failed or empty select used to surface as a bare TypeError on
+  // `holes.map` below, far from its real cause.
+  if (holesErr) throw new Error(`could not load holes for probe round: ${holesErr.message}`);
+  if (!holes || holes.length === 0) throw new Error("course has no holes to build a probe round from");
 
   const roundId = crypto.randomUUID();
   const code = multiplayer
@@ -264,55 +268,91 @@ async function makeRound({ multiplayer }) {
 // 2 & 3. Group round with a second real player.
 {
   const { roundId, code, holeIds } = await makeRound({ multiplayer: true });
-
-  const guestEmail = `tee-delete-probe-${Date.now()}@example.com`;
   const guest = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const signUp = await guest.auth.signUp({ email: guestEmail, password: "TeeProbe!2026x" });
-  if (!signUp.data.session) {
-    check("could create a second player", false, signUp.error?.message ?? "no session returned");
-  } else {
-    const guestId = signUp.data.user.id;
-    await guest.from("profiles").upsert({ id: guestId, display_name: "Probe" });
-    await guest.rpc("join_round_by_code", { p_code: code });
-    await guest.from("scores").insert({
-      round_id: roundId, profile_id: guestId, hole_id: holeIds[0], strokes: 5,
-    });
+  let guestId = null;
 
-    // The owner leaves a round another player is seated in.
-    const { data: result, error } = await supabase.rpc("delete_my_round", { p_round_id: roundId });
-    check("group round returns 'left'", error == null && result === "left", error?.message ?? `got ${result}`);
+  // signUp, the checks, and cleanup all live in `try` so a failure partway
+  // through (signUp itself included) can't skip the `finally` below and
+  // leave the probe round — join code and all — occupying its slot forever.
+  try {
+    const guestEmail = `tee-delete-probe-${Date.now()}@example.com`;
+    const signUp = await guest.auth.signUp({ email: guestEmail, password: "TeeProbe!2026x" });
+    if (!signUp.data.session) {
+      check("could create a second player", false, signUp.error?.message ?? "no session returned");
+    } else {
+      guestId = signUp.data.user.id;
+      await guest.from("profiles").upsert({ id: guestId, display_name: "Probe" });
+      await guest.rpc("join_round_by_code", { p_code: code });
+      await guest.from("scores").insert({
+        round_id: roundId, profile_id: guestId, hole_id: holeIds[0], strokes: 5,
+      });
 
-    const { count: mine } = await supabase
-      .from("scores").select("id", { count: "exact", head: true })
-      .eq("round_id", roundId).eq("profile_id", uid);
-    check("the leaver's scores are gone", mine === 0, `${mine} remain`);
+      // The owner leaves a round another player is seated in.
+      const { data: result, error } = await supabase.rpc("delete_my_round", { p_round_id: roundId });
+      check("group round returns 'left'", error == null && result === "left", error?.message ?? `got ${result}`);
 
-    const { count: theirs } = await guest
-      .from("scores").select("id", { count: "exact", head: true })
-      .eq("round_id", roundId).eq("profile_id", guestId);
-    check("the other player's scores survive", theirs === 1, `${theirs} found, expected 1`);
+      const { count: mine } = await supabase
+        .from("scores").select("id", { count: "exact", head: true })
+        .eq("round_id", roundId).eq("profile_id", uid);
+      check("the leaver's scores are gone", mine === 0, `${mine} remain`);
 
-    const { data: after } = await guest.from("rounds").select("owner_id").eq("id", roundId).maybeSingle();
-    check("the round survives for them", after != null, after ? "still there" : "round was destroyed");
-    check(
-      "ownership transferred to the remaining player",
-      after?.owner_id === guestId,
-      `owner_id=${String(after?.owner_id).slice(0, 8)}…`
-    );
+      const { count: theirs } = await guest
+        .from("scores").select("id", { count: "exact", head: true })
+        .eq("round_id", roundId).eq("profile_id", guestId);
+      check("the other player's scores survive", theirs === 1, `${theirs} found, expected 1`);
 
-    // 4. A non-member gets 'not_found' and changes nothing.
-    const { roundId: privateId } = await makeRound({ multiplayer: false });
-    const { data: denied, error: deniedErr } = await guest.rpc("delete_my_round", { p_round_id: privateId });
-    check("a non-member gets 'not_found'", deniedErr == null && denied === "not_found", deniedErr?.message ?? `got ${denied}`);
-    const { count: survived } = await supabase
-      .from("rounds").select("id", { count: "exact", head: true }).eq("id", privateId);
-    check("and the round they targeted is untouched", survived === 1, `${survived} row(s)`);
+      const { data: after } = await guest.from("rounds").select("owner_id").eq("id", roundId).maybeSingle();
+      check("the round survives for them", after != null, after ? "still there" : "round was destroyed");
+      check(
+        "ownership transferred to the remaining player",
+        after?.owner_id === guestId,
+        `owner_id=${String(after?.owner_id).slice(0, 8)}…`
+      );
 
-    await supabase.rpc("delete_my_round", { p_round_id: privateId });
-    await guest.rpc("delete_my_round", { p_round_id: roundId });
-    await guest.auth.signOut();
+      // 4. A non-member gets 'not_found' and changes nothing.
+      const { roundId: privateId } = await makeRound({ multiplayer: false });
+      const { data: denied, error: deniedErr } = await guest.rpc("delete_my_round", { p_round_id: privateId });
+      check("a non-member gets 'not_found'", deniedErr == null && denied === "not_found", deniedErr?.message ?? `got ${denied}`);
+      const { count: survived } = await supabase
+        .from("rounds").select("id", { count: "exact", head: true }).eq("id", privateId);
+      check("and the round they targeted is untouched", survived === 1, `${survived} row(s)`);
+
+      await supabase.rpc("delete_my_round", { p_round_id: privateId });
+      await guest.rpc("delete_my_round", { p_round_id: roundId });
+
+      // The guest account must not become a permanent, real auth user in a
+      // production project — left behind, it's a stray seated "guest" the
+      // App Store reviewer could see while signed in as the demo account.
+      // `guest` is already authenticated as the guest from signUp above, so
+      // this is already "signed in as the guest" calling its own account's
+      // deletion — no separate sign-in call is needed.
+      const { error: deleteAcctErr } = await guest.rpc("delete_my_account");
+      check("probe guest account deleted itself", deleteAcctErr == null, deleteAcctErr?.message);
+      const { data: stillThere } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq("id", guestId)
+        .maybeSingle();
+      check("guest profile is gone", stillThere == null, stillThere ? "still present" : "gone");
+    }
+  } finally {
+    // Runs whether signUp succeeded, failed, or something above threw —
+    // the probe round (and its active join code) must not survive this run.
+    // supabase-js's query builder is PromiseLike but not a real Promise (no
+    // .catch/.finally), so failures here are swallowed with try/catch rather
+    // than a chained .catch().
+    try {
+      await supabase.rpc("delete_my_round", { p_round_id: roundId });
+    } catch {
+      // best-effort cleanup
+    }
+    try {
+      await guest.auth.signOut();
+    } catch {
+      // best-effort cleanup
+    }
   }
 }
 

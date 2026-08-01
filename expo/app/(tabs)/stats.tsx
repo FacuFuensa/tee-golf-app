@@ -9,7 +9,8 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { TeeMark } from "@/components/TeeMark";
 import { TeeButton } from "@/components/ui/TeeButton";
 import { TeeCard } from "@/components/ui/TeeCard";
-import { Colors, Fonts, Radius, Spacing, Typography, hairline } from "@/constants/theme";
+import { Colors, Fonts, Radius, Spacing, Typography, cardShadow, hairline } from "@/constants/theme";
+import { useActiveRound } from "@/providers/ActiveRoundProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { deleteMyRound, fetchPlayerRounds } from "@/services/db";
 import { notifySuccess, tapLight } from "@/utils/haptics";
@@ -18,19 +19,15 @@ import {
   formatPercent,
   formatToPar,
   formatToParDecimal,
+  SCORE_CLASS_COLORS,
   type PlayerStats,
   type RoundSummary,
   type ScoreBucket,
 } from "@/utils/stats";
 
-const BUCKET_COLORS: Record<string, string> = {
-  eagle: "#C7A24A",
-  birdie: "#4E8C6A",
-  par: "#1C3A2B",
-  bogey: "#9BA59C",
-  double: "#B0463B",
-  triple: "#6E2F28",
-};
+// Shared with the round-detail screen so the same score always reads as the
+// same colour everywhere — see utils/stats.ts.
+const BUCKET_COLORS = SCORE_CLASS_COLORS;
 
 export default function StatsScreen() {
   const insets = useSafeAreaInsets();
@@ -44,16 +41,34 @@ export default function StatsScreen() {
 
   const router = useRouter();
   const queryClient = useQueryClient();
+  const { clearActiveRound } = useActiveRound();
 
   const deleteRound = useMutation({
     mutationFn: (roundId: string) => deleteMyRound(roundId),
-    onSuccess: (result) => {
+    onSuccess: (result, roundId) => {
       if (result === "not_found") {
         Alert.alert("Round not found", "This round is no longer in your history.");
       } else {
         notifySuccess();
+        // 'left' is the surprising outcome — the round didn't vanish, it just
+        // isn't yours anymore. 'deleted' is the ordinary case and stays silent.
+        if (result === "left") {
+          Alert.alert(
+            "You left the round",
+            "Your scores were removed. It stays in the other players' history."
+          );
+        }
       }
       queryClient.invalidateQueries({ queryKey: ["player-rounds"] });
+      // The detail screen and live leaderboard may still hold this round
+      // cached; a deleted/left round now fails rounds_select_member, so stale
+      // entries would surface as errors instead of just disappearing.
+      queryClient.removeQueries({ queryKey: ["round-detail", roundId] });
+      queryClient.removeQueries({ queryKey: ["round", roundId] });
+      queryClient.removeQueries({ queryKey: ["leaderboard", roundId] });
+      // A paused multiplayer round can be in history and the "in progress"
+      // banner at once — clear it so Resume doesn't point at a dead round.
+      clearActiveRound(roundId);
     },
     onError: () => {
       Alert.alert(
@@ -337,14 +352,21 @@ function RoundLog({
     <View style={styles.logSection}>
       <Text style={styles.sectionLabel}>Round history</Text>
       <Text style={styles.logHint}>Swipe a round to remove it, or hold to open the same menu.</Text>
-      <TeeCard padded={false} style={styles.logCard}>
-        {rounds.map((round, index) => (
-          <View key={round.id}>
-            {index > 0 ? <View style={styles.logDivider} /> : null}
-            <RoundRow round={round} onOpen={() => onOpen(round.id)} onDelete={() => onDelete(round)} />
-          </View>
-        ))}
-      </TeeCard>
+      {/* TeeCard bakes cardShadow onto the same view we need `overflow: hidden`
+          on (to clip the swipe action) — on iOS that sets clipsToBounds,
+          which clips the shadow too. An outer view carries the shadow instead;
+          TeeCard's own shadow is still there underneath but invisible, clipped
+          by its own overflow. See TeeCard.tsx (not modified — it's shared). */}
+      <View style={styles.logCardShadow}>
+        <TeeCard padded={false} style={styles.logCard}>
+          {rounds.map((round, index) => (
+            <View key={round.id}>
+              {index > 0 ? <View style={styles.logDivider} /> : null}
+              <RoundRow round={round} onOpen={() => onOpen(round.id)} onDelete={() => onDelete(round)} />
+            </View>
+          ))}
+        </TeeCard>
+      </View>
     </View>
   );
 }
@@ -642,6 +664,8 @@ const styles = StyleSheet.create({
   logSection: { gap: Spacing.md },
   sectionLabel: { ...Typography.overline, marginLeft: 2 },
   logHint: { ...Typography.subhead, color: Colors.textTertiary, marginLeft: 2, marginTop: -6 },
+  // Shadow lives here, on an unclipped wrapper — see the comment at its usage.
+  logCardShadow: { borderRadius: Radius.lg, ...cardShadow },
   // overflow hidden so the red action is clipped by the card's rounded corners
   logCard: { paddingHorizontal: 0, overflow: "hidden" },
   // Inset to match logRow's own horizontal padding — the divider is a sibling
