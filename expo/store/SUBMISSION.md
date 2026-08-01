@@ -623,5 +623,14 @@ attaches the file there.
 
 ### Version bump
 
-Leave `version` in `app.json` at `1.0.0` until 1.0.0 clears App Store review — a version being
-reviewed must not be modified. Then set it to `1.1.0`. Leave `buildNumber` alone; EAS owns it.
+`version` is `1.1.0`. Leave `buildNumber` alone — `cli.appVersionSource` is `remote`, so EAS owns
+it and increments per build.
+
+Bumping while 1.0.0 sits in review is safe, and the distinction is worth keeping straight: what
+must not be touched is the **1.0.0 version record** in App Store Connect and the binary already
+attached to it. Uploading a build on a different version train does not touch either. The build
+simply appears in TestFlight as 1.1.0, and its App Store version record gets created later, once
+1.0.0 resolves — you cannot submit a second version for review while one is already in it.
+
+If 1.0.0 is rejected and needs a fix, set `version` back to `1.0.0` for that build, ship it, then
+return to `1.1.0`.
