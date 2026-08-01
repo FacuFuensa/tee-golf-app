@@ -1,7 +1,7 @@
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 
-import { Colors, Fonts, Radius, Spacing } from "@/constants/theme";
+import { Colors, Fonts, Spacing } from "@/constants/theme";
 import { countByClass } from "@/utils/scorecard";
 import { formatToPar, type ScoreClass } from "@/utils/stats";
 
@@ -50,7 +50,7 @@ export function SummaryCard({ courseName, date, card, playerName }: CardProps) {
 const styles = StyleSheet.create({
   root: {
     backgroundColor: Colors.primary,
-    borderRadius: Radius.xl,
+    // Square on purpose — see ScorecardCard's root style.
     padding: Spacing.xl,
     justifyContent: "space-between",
   },

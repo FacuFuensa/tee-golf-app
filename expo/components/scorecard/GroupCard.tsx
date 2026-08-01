@@ -1,7 +1,7 @@
 import React from "react";
 import { StyleSheet, Text, View } from "react-native";
 
-import { Colors, Fonts, Radius, Spacing, hairline } from "@/constants/theme";
+import { Colors, Fonts, Spacing, hairline } from "@/constants/theme";
 import type { LeaderboardEntry } from "@/services/db";
 import { formatToPar } from "@/utils/stats";
 
@@ -56,10 +56,11 @@ export function GroupCard({ courseName, date, entries }: GroupCardProps) {
 const styles = StyleSheet.create({
   root: {
     backgroundColor: Colors.primary,
-    borderRadius: Radius.xl,
+    // Square on purpose — see ScorecardCard's root style.
     padding: Spacing.xl,
     justifyContent: "space-between",
-    // Rasterised into a shared image — nothing may paint past the rounded edge.
+    // Rasterised into a shared image — nothing may paint past the edge, even
+    // though the player list is capped at MAX_SHOWN_PLAYERS.
     overflow: "hidden",
   },
   list: { gap: 2 },

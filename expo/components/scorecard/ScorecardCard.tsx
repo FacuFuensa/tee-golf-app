@@ -157,7 +157,10 @@ export function ScorecardCard({ courseName, date, card, playerName }: CardProps)
 const styles = StyleSheet.create({
   root: {
     backgroundColor: Colors.primary,
-    borderRadius: Radius.xl,
+    // Deliberately square. A rounded card exports a PNG with transparent
+    // corners, which take on whatever background the viewer has — white in a
+    // light chat, dark in a dark one. Square means the image looks identical
+    // everywhere it lands.
     padding: Spacing.xl,
     // Was `justifyContent: "space-between"` against a fixed CARD_WIDTH * 1.25
     // height, which relied on that height to create the space to distribute.
