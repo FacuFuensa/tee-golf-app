@@ -293,6 +293,43 @@ async function makeRound({ multiplayer }) {
         round_id: roundId, profile_id: guestId, hole_id: holeIds[0], strokes: 5,
       });
 
+      // Finishing a round is owner-only (rounds_update_owner). The failure this
+      // guards against is not an error — it is SILENCE: a joiner's update
+      // matches zero rows and Postgres reports no problem at all, which the app
+      // read as success and used to tell them a live round was over. So assert
+      // on the affected-row COUNT, not on the absence of an error. Checking
+      // `error == null` here would pass no matter who called it.
+      const guestFinish = await guest
+        .from("rounds")
+        .update({ finished_at: new Date().toISOString() }, { count: "exact" })
+        .eq("id", roundId);
+      check(
+        "a joiner cannot finish the round, and it shows up as zero rows not an error",
+        guestFinish.error == null && guestFinish.count === 0,
+        guestFinish.error
+          ? `raised instead: ${guestFinish.error.message}`
+          : `count=${guestFinish.count} (must be 0)`
+      );
+      const { data: stillLive } = await guest
+        .from("rounds").select("finished_at").eq("id", roundId).maybeSingle();
+      check(
+        "and the round is still live for everyone else",
+        stillLive != null && stillLive.finished_at == null,
+        stillLive == null ? "round not visible" : `finished_at=${stillLive.finished_at}`
+      );
+
+      // The same write as the owner must actually land — otherwise the check
+      // above would pass simply because nobody can ever finish a round.
+      const ownerFinish = await supabase
+        .from("rounds")
+        .update({ finished_at: new Date().toISOString() }, { count: "exact" })
+        .eq("id", roundId);
+      check(
+        "the owner can finish it, and the count proves the write landed",
+        ownerFinish.error == null && ownerFinish.count === 1,
+        ownerFinish.error?.message ?? `count=${ownerFinish.count} (must be 1)`
+      );
+
       // The owner leaves a round another player is seated in.
       const { data: result, error } = await supabase.rpc("delete_my_round", { p_round_id: roundId });
       check("group round returns 'left'", error == null && result === "left", error?.message ?? `got ${result}`);
