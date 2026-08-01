@@ -550,3 +550,71 @@ where the name `Tee: Golf GPS & Scorecard` gets reserved.
 Note `cli.appVersionSource` is `remote`, so EAS owns the build number and increments it per build.
 The `buildNumber: "1"` in `app.json` is a starting point, not the source of truth — you will never
 hit the "a build with this version already exists" error on a resubmission.
+
+---
+
+## 10. Version 1.1.0
+
+Four features, built on branch `feat/round-history-and-scorecard`.
+
+**Delete one round from history.** Swipe a row in Statistics → Round history, or hold it. Both open
+the same confirmation. In a group round where other players are still seated this removes only you
+and leaves the round for them; otherwise the round itself goes.
+
+**Round detail, hole by hole.** Tap any round to see each hole with its par, your strokes and a
+score tag, plus OUT / IN / TOTAL. Finishing a round now lands here instead of returning to the tab.
+
+**Your best on a hole you've played before.** Shown small under the hole number, on the line that
+already carries the scorecard yardage. Turns green when the current round is beating it.
+
+**Shareable scorecards.** Three formats — the hole-by-hole grid, a square summary, and a group card
+— with a live preview, exported as a PNG to the OS share sheet.
+
+### Prerequisite: migration 0013
+
+`supabase/migrations/0013_delete_single_round.sql` **must be applied before submitting a build**, or
+the app will call a function that does not exist and deletion will fail for everyone.
+
+It adds `delete_my_round(uuid)`. It is `SECURITY DEFINER` for the same reason `delete_my_data` and
+`join_round_by_code` are: the decision "should the round row itself die?" depends on state the
+deletion has already changed, so it cannot be made atomically from the client. `rounds` and `scores`
+still have no DELETE policy — the function is the only path, and it is granted to `authenticated`
+only and revoked from `anon`.
+
+### App Privacy: nothing changes
+
+**No new data is collected, and no nutrition-label or privacy-manifest change is required.** Do not
+re-derive this next release — the reasoning is:
+
+- Every feature reads data the app already stores (rounds, scores, holes, profiles). Section 5's
+  declared types already cover all of it.
+- The shared scorecard image is generated on device and handed to the OS share sheet. The app never
+  uploads it, and it never reaches our backend or any third party.
+- `react-native-view-shot`, the one new dependency, is a rendering module. It uses no required-reason
+  API, collects nothing and has no network access.
+- The group card shows other players' names and scores, but only for players already in a round with
+  you, and only when the golfer explicitly selects that tab. That is user-initiated sharing of data
+  they already see in the app, not collection.
+
+The age rating questionnaire in section 4 is unaffected. The Guideline 1.2 moderation stack in
+section 6 is untouched.
+
+### Still unverified at time of writing
+
+**The real PNG export has never been seen.** `react-native-view-shot` is a native module that does
+not exist in Expo Go, so this was only exercised in the web preview — which runs a different code
+path (html2canvas). Before submitting, do a development build and confirm on a real device:
+
+```bash
+cd expo
+npx --yes eas-cli@latest build --platform ios --profile development
+```
+
+Then share each of the three formats and check: the image is ~1020 px wide, the background is opaque,
+and **an unscored hole is blank, not `0`**. A zero in a scorecard column reads as a real score, and
+this image goes to other people.
+
+### Version bump
+
+Leave `version` in `app.json` at `1.0.0` until 1.0.0 clears App Store review — a version being
+reviewed must not be modified. Then set it to `1.1.0`. Leave `buildNumber` alone; EAS owns it.
