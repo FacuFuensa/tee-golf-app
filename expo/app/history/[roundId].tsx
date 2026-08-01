@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { ChevronLeft, Trash2, Users } from "lucide-react-native";
-import React, { useMemo } from "react";
+import { ChevronLeft, Share2, Trash2, Users } from "lucide-react-native";
+import React, { useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { ShareRoundSheet } from "@/components/scorecard/ShareRoundSheet";
 import { TeeButton } from "@/components/ui/TeeButton";
 import { TeeCard } from "@/components/ui/TeeCard";
 import { Colors, Fonts, Radius, Spacing, Typography, hairline } from "@/constants/theme";
@@ -28,8 +29,9 @@ export default function RoundDetailScreen() {
   const router = useRouter();
   const { roundId: param } = useLocalSearchParams<{ roundId: string }>();
   const roundId = typeof param === "string" ? param : "";
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const queryClient = useQueryClient();
+  const [sharing, setSharing] = useState(false);
 
   const bundleQuery = useQuery({
     queryKey: ["round", roundId],
@@ -105,7 +107,19 @@ export default function RoundDetailScreen() {
         <Text style={styles.topTitle} numberOfLines={1}>
           {bundleQuery.data?.course.name ?? "Round"}
         </Text>
-        <View style={styles.iconButton} />
+        <Pressable
+          style={styles.iconButton}
+          onPress={() => {
+            tapLight();
+            setSharing(true);
+          }}
+          hitSlop={8}
+          disabled={!card}
+          accessibilityRole="button"
+          accessibilityLabel="Share this round"
+        >
+          <Share2 size={20} color={card ? Colors.primary : Colors.textTertiary} strokeWidth={2.4} />
+        </Pressable>
       </View>
 
       {bundleQuery.isLoading ? (
@@ -181,6 +195,18 @@ export default function RoundDetailScreen() {
           />
         </ScrollView>
       )}
+
+      {bundleQuery.data && card ? (
+        <ShareRoundSheet
+          visible={sharing}
+          onClose={() => setSharing(false)}
+          courseName={bundleQuery.data.course.name}
+          date={bundleQuery.data.round.finished_at ?? bundleQuery.data.round.started_at}
+          card={card}
+          playerName={profile?.display_name ?? "You"}
+          entries={isMultiplayer ? boardQuery.data ?? [] : []}
+        />
+      ) : null}
     </View>
   );
 }
