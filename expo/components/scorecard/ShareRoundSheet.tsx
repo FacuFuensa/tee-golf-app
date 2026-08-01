@@ -53,7 +53,7 @@ export function ShareRoundSheet({
 
   const onShare = async (): Promise<void> => {
     setBusy(true);
-    const result = await captureViewToPng(shotRef);
+    const result = await captureViewToPng(shotRef, { courseName, date });
     setBusy(false);
 
     if (result.reason === "unavailable") {

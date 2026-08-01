@@ -1,3 +1,4 @@
+import { File, Paths } from "expo-file-system";
 import type { RefObject } from "react";
 import type { View } from "react-native";
 
@@ -14,6 +15,45 @@ export type CaptureFailure = "unavailable" | "failed";
 export interface CaptureResult {
   uri: string | null;
   reason: CaptureFailure | null;
+}
+
+/** What the exported file should be named after — the round being shared. */
+export interface CaptureNameHint {
+  courseName: string;
+  /** ISO timestamp. */
+  date: string;
+}
+
+const FALLBACK_NAME = "Scorecard";
+/** Generous but well under filesystem name limits (255 bytes on APFS/most others). */
+const MAX_NAME_LENGTH = 80;
+/** Characters illegal (or reserved) in a filename on iOS/Android/Windows. */
+const ILLEGAL_FILENAME_CHARS = /[/\\:*?"<>|]/g;
+
+/**
+ * Course names come from a third-party catalog and from user-typed courses,
+ * so neither is trustworthy as a filename. Strip anything illegal, collapse
+ * the whitespace that leaves behind, and cap the length — an empty or
+ * all-illegal name (e.g. "A/B") falls back to something sensible rather than
+ * producing a broken or blank path.
+ */
+function sanitizeFilenamePart(raw: string): string {
+  const cleaned = raw.replace(ILLEGAL_FILENAME_CHARS, " ").replace(/\s+/g, " ").trim().slice(0, MAX_NAME_LENGTH).trim();
+  return cleaned.length > 0 ? cleaned : FALLBACK_NAME;
+}
+
+// Matches the date format shown on the card itself (see `formatCardDate` in
+// ScorecardCard.tsx) so the filename and the image agree on the round's date.
+function formatFilenameDate(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function buildFilename({ courseName, date }: CaptureNameHint): string {
+  return `${sanitizeFilenamePart(courseName)} - ${formatFilenameDate(date)}.png`;
 }
 
 type CaptureFn = (ref: RefObject<View | null>, options: object) => Promise<string>;
@@ -52,17 +92,38 @@ try {
  * (`View.draw` onto a `Canvas`) doesn't read this option and isn't
  * susceptible to the same blank-image failure.
  */
-export async function captureViewToPng(ref: RefObject<View | null>): Promise<CaptureResult> {
+export async function captureViewToPng(
+  ref: RefObject<View | null>,
+  nameHint: CaptureNameHint
+): Promise<CaptureResult> {
   if (captureRef == null) return { uri: null, reason: "unavailable" };
+  let tmpUri: string;
   try {
-    const uri = await captureRef(ref, {
+    tmpUri = await captureRef(ref, {
       format: "png",
       quality: 1,
       result: "tmpfile",
       useRenderInContext: true,
     });
-    return { uri, reason: null };
   } catch {
     return { uri: null, reason: "failed" };
+  }
+
+  // view-shot's tmpfile is named with a bare UUID. On iOS, UIActivityViewController
+  // decides which activities to offer (notably "Save Image" / "Save to Photos")
+  // largely from the file's extension, and the UUID name is also what the
+  // recipient would see in Mail/Files/Messages. Re-home the capture under a
+  // human-readable `.png` name built from the round itself before sharing it.
+  try {
+    const named = new File(Paths.cache, buildFilename(nameHint));
+    // Sharing the same round twice in one session would collide on this
+    // deterministic name — `copy` refuses to overwrite, so clear it first.
+    if (named.exists) named.delete();
+    new File(tmpUri).copy(named);
+    return { uri: named.uri, reason: null };
+  } catch {
+    // Renaming is a nicety, not the point of sharing — a share sheet without
+    // "Save Image" still beats no share at all.
+    return { uri: tmpUri, reason: null };
   }
 }
