@@ -39,6 +39,8 @@ export interface RoundSummary {
   toPar: number;
   /** Score relative to par projected to a full 18 holes. */
   toParPer18: number;
+  /** Drives the delete confirmation copy: leaving vs deleting. */
+  isMultiplayer: boolean;
 }
 
 export interface PlayerStats {
@@ -95,6 +97,7 @@ function summarize(round: PlayedRound): RoundSummary {
     par,
     toPar,
     toParPer18,
+    isMultiplayer: round.round.is_multiplayer,
   };
 }
 

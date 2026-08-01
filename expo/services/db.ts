@@ -540,6 +540,21 @@ export async function deleteMyAccount(): Promise<void> {
   if (error) throw error;
 }
 
+export type DeleteRoundResult = "deleted" | "left" | "not_found";
+
+/**
+ * Remove one round from the caller's history. In a group round where other
+ * players are still seated this removes only the caller ("left"); otherwise the
+ * round itself is deleted ("deleted"). See migration 0013 for why this is a
+ * function rather than a plain delete.
+ */
+export async function deleteMyRound(roundId: string): Promise<DeleteRoundResult> {
+  const { data, error } = await supabase.rpc("delete_my_round", { p_round_id: roundId });
+  if (error) throw error;
+  const value = Array.isArray(data) ? data[0] : data;
+  return (value as DeleteRoundResult) ?? "not_found";
+}
+
 /** Club bag (Smart Caddy) ------------------------------------------------ */
 
 /** Every club in the golfer's bag, ordered longest-carry first. */
