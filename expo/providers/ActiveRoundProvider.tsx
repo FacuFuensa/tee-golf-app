@@ -99,7 +99,13 @@ export const [ActiveRoundProvider, useActiveRound] = createContextHook(() => {
       const key = storageKeyFor(userId);
       setActiveRoundState((prev) => {
         // Only clear if it matches the round being closed out (or no id given).
-        if (roundId && prev && prev.roundId !== roundId) return prev;
+        // `prev` is null during the provider's initial AsyncStorage.getItem()
+        // read — a mismatch must leave storage alone in that window too, or
+        // deleting an unrelated historical round wipes a paused round that
+        // just hasn't loaded into state yet. `prev?.roundId !== roundId` is
+        // true both when prev is null and when it's a different round, so a
+        // roundId argument only ever clears its own match.
+        if (roundId && prev?.roundId !== roundId) return prev;
         if (key) AsyncStorage.removeItem(key).catch(() => {});
         return null;
       });

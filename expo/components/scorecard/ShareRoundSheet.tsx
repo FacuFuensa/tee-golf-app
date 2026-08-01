@@ -13,19 +13,10 @@ import { tapLight } from "@/utils/haptics";
 import type { ScorecardData } from "@/utils/scorecard";
 
 import { GroupCard } from "./GroupCard";
-import { CARD_WIDTH, ScorecardCard } from "./ScorecardCard";
+import { ScorecardCard } from "./ScorecardCard";
 import { SummaryCard } from "./SummaryCard";
 
 type Format = "scorecard" | "summary" | "group";
-
-// Logical (React Native) height for each format, matching the cards' own
-// dimensions — the sheet needs these to ask capture.ts for a correctly
-// proportioned, consistently-sized export.
-const CARD_HEIGHTS: Record<Format, number> = {
-  scorecard: Math.round(CARD_WIDTH * 1.25),
-  summary: CARD_WIDTH,
-  group: Math.round(CARD_WIDTH * 1.25),
-};
 
 interface ShareRoundSheetProps {
   visible: boolean;
@@ -62,7 +53,7 @@ export function ShareRoundSheet({
 
   const onShare = async (): Promise<void> => {
     setBusy(true);
-    const result = await captureViewToPng(shotRef, CARD_WIDTH, CARD_HEIGHTS[format]);
+    const result = await captureViewToPng(shotRef);
     setBusy(false);
 
     if (result.reason === "unavailable") {

@@ -611,11 +611,15 @@ cd expo
 npx --yes eas-cli@latest build --platform ios --profile development
 ```
 
-Then share each of the three formats and check: the image is ~1020 px wide (this is now an explicit
-width/height passed to view-shot, not a device-scale coincidence, so it should hold on any device),
-the background is opaque, and **an unscored hole is blank, not `0`**. A zero in a scorecard column
-reads as a real score, and this image goes to other people. Also confirm on Android specifically —
-the share sheet now goes through `expo-sharing`, which is what actually attaches the file there.
+Then share each of the three formats and check: **the card fills the whole frame, with no
+transparent margin.** There is no fixed pixel target to check against any more — output resolution
+follows the exporting device's own screen scale (roughly 1020 px wide on a 3x device, roughly 680 px
+on a 2x one, e.g. iPhone SE/XR/11 or any iPad), so do this check on the smallest 2x device available;
+that's where a sizing mismatch shows up as a card confined to one corner of a mostly-transparent
+image. Also confirm the background is opaque, and **an unscored hole is blank, not `0`**. A zero in
+a scorecard column reads as a real score, and this image goes to other people. Also confirm on
+Android specifically — the share sheet now goes through `expo-sharing`, which is what actually
+attaches the file there.
 
 ### Version bump
 

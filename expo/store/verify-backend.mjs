@@ -272,6 +272,10 @@ async function makeRound({ multiplayer }) {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   let guestId = null;
+  // Hoisted out of `try` so `finally` can see it too — it used to be declared
+  // with `const` inside the `try` block, so a throw between its creation and
+  // its own cleanup call a few lines down leaked this round forever.
+  let privateId = null;
 
   // signUp, the checks, and cleanup all live in `try` so a failure partway
   // through (signUp itself included) can't skip the `finally` below and
@@ -312,7 +316,7 @@ async function makeRound({ multiplayer }) {
       );
 
       // 4. A non-member gets 'not_found' and changes nothing.
-      const { roundId: privateId } = await makeRound({ multiplayer: false });
+      privateId = (await makeRound({ multiplayer: false })).roundId;
       const { data: denied, error: deniedErr } = await guest.rpc("delete_my_round", { p_round_id: privateId });
       check("a non-member gets 'not_found'", deniedErr == null && denied === "not_found", deniedErr?.message ?? `got ${denied}`);
       const { count: survived } = await supabase
@@ -330,23 +334,66 @@ async function makeRound({ multiplayer }) {
       // deletion — no separate sign-in call is needed.
       const { error: deleteAcctErr } = await guest.rpc("delete_my_account");
       check("probe guest account deleted itself", deleteAcctErr == null, deleteAcctErr?.message);
-      const { data: stillThere } = await supabase
-        .from("profiles")
-        .select("id")
-        .eq("id", guestId)
-        .maybeSingle();
-      check("guest profile is gone", stillThere == null, stillThere ? "still present" : "gone");
+
+      // Querying `profiles` as the DEMO account cannot prove anything here:
+      // profiles_select_scoped (0011) is `id = auth.uid() or
+      // shares_round_with(id)`, and the shared round was already deleted a
+      // few lines up, so `shares_round_with(guestId)` is false regardless of
+      // whether delete_my_account actually removed the guest's row — the
+      // demo account would see `null` either way. That made this a check
+      // that could never fail. auth.getUser() instead asks GoTrue directly
+      // whether the guest's own (still-unexpired) access token resolves to a
+      // live user — which is exactly what delete_my_account is supposed to
+      // make false, and does not depend on any RLS policy or round state.
+      // Do not "simplify" this back to a profiles select as the demo account.
+      const { data: guestAfter, error: guestAfterErr } = await guest.auth.getUser();
+      check(
+        "guest account no longer resolves to a live user",
+        guestAfterErr != null || guestAfter?.user == null,
+        guestAfterErr ? guestAfterErr.message : "still resolves to a user"
+      );
     }
   } finally {
-    // Runs whether signUp succeeded, failed, or something above threw —
-    // the probe round (and its active join code) must not survive this run.
-    // supabase-js's query builder is PromiseLike but not a real Promise (no
-    // .catch/.finally), so failures here are swallowed with try/catch rather
-    // than a chained .catch().
+    // Runs whether signUp succeeded, failed, or something above threw — the
+    // shared probe round (and its active join code), the private probe round
+    // from check 4, and the guest account must not survive this run. Every
+    // step below is independently best-effort: supabase-js's query builder is
+    // PromiseLike but not a real Promise (no .catch/.finally), so failures
+    // are swallowed with try/catch rather than a chained .catch(), and no
+    // single failure here is allowed to mask whatever error triggered this
+    // block in the first place.
+    if (privateId) {
+      try {
+        await supabase.rpc("delete_my_round", { p_round_id: privateId });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+    // If the demo account already left (ownership transferred to the guest)
+    // before a throw reached this block, the demo account is no longer a
+    // member and this call returns 'not_found' — leaving the round, and its
+    // live join code, seated under the guest. Fall back to the guest's own
+    // deletion path so the round doesn't survive just because the account
+    // that can no longer reach it happened to go first.
+    let roundStillThere = true;
     try {
-      await supabase.rpc("delete_my_round", { p_round_id: roundId });
+      const { data } = await supabase.rpc("delete_my_round", { p_round_id: roundId });
+      roundStillThere = data !== "deleted" && data !== "left";
     } catch {
       // best-effort cleanup
+    }
+    if (roundStillThere) {
+      try {
+        await guest.rpc("delete_my_round", { p_round_id: roundId });
+      } catch {
+        // best-effort cleanup
+      }
+    }
+    try {
+      await guest.rpc("delete_my_account");
+    } catch {
+      // best-effort cleanup — already deleted above, or signUp never got
+      // this far and there is no account to delete
     }
     try {
       await guest.auth.signOut();
