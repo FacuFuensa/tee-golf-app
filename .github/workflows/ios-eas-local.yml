@@ -136,6 +136,30 @@ jobs:
           fi
           echo "OK: watch icon declared ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$WATCH_APP/Info.plist"))"
 
+          # The quietest failure of the lot, and the one that actually shipped:
+          # a watch app whose MinimumOSVersion is above the tester's watchOS
+          # builds, uploads, and passes every check above. TestFlight even
+          # reports "Apple Watch: Yes" on the App Details page. But the iPhone's
+          # Watch app never lists it under Available Apps, because watchOS
+          # filters out anything the device cannot run — silently, with no error
+          # to find anywhere. Build 16 shipped with an 11.0 floor and could not
+          # be installed on the only watch available to test it.
+          #
+          # WATCH_MIN_OS is the floor this project intends to support. Raising
+          # it is a real decision — it drops hardware — so it belongs in the
+          # diff, not in a config file nobody re-reads. Keep it in step with
+          # `deploymentTarget` in expo/targets/watch/expo-target.config.js.
+          WATCH_MIN_OS=10.0
+          ACTUAL_MIN=$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$WATCH_APP/Info.plist" 2>/dev/null || echo "")
+          echo "watch MinimumOSVersion: ${ACTUAL_MIN:-(absent)}"
+          if [ "$ACTUAL_MIN" != "$WATCH_MIN_OS" ]; then
+            echo "FAIL: the watch app requires watchOS '${ACTUAL_MIN:-?}', but this project targets $WATCH_MIN_OS."
+            echo "Watches below that floor are never offered the app, with no error shown to the user."
+            echo "Fix \`deploymentTarget\` in expo/targets/watch/expo-target.config.js, or update WATCH_MIN_OS here."
+            exit 1
+          fi
+          echo "OK: watch runs on watchOS $WATCH_MIN_OS and later"
+
       - name: Keep the .ipa
         uses: actions/upload-artifact@v4
         with:

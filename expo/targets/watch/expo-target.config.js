@@ -94,10 +94,24 @@ module.exports = (config) => {
     // suffix.
     bundleIdentifier: ".watchkitapp",
 
-    // watchOS 11 covers Series 6 and later (2020+), which is the practical
-    // floor for anyone still getting OS updates. The plugin's own default
-    // (11.0) already lands here; set explicitly so it's a deliberate choice
-    // and not a silent default.
-    deploymentTarget: "11.0",
+    // 10.0, NOT the plugin's default of 11.0, and this is the single most
+    // load-bearing number in this file: it decides which watches are even
+    // OFFERED the app.
+    //
+    // The developer's own watch is an Apple Watch Series 5 (MWRX2LL/A, 40mm,
+    // 2019), and watchOS 10.6.1 is the last version it will ever run —
+    // watchOS 11 dropped the Series 4, the Series 5 and the 1st-gen SE. With
+    // an 11.0 floor the build succeeds, the .ipa is valid, App Store Connect
+    // accepts it, TestFlight even reports "Apple Watch: Yes" — and the app
+    // simply never appears under Available Apps in the iPhone's Watch app.
+    // There is no error anywhere; watchOS filters it out silently. That cost
+    // a full build-and-upload round trip to discover.
+    //
+    // 10.0 is the lowest floor the source actually permits: the `#Preview`
+    // macro in ContentView.swift is annotated @available(watchOS 10.0, *),
+    // so going lower breaks the build unless that preview is guarded. It
+    // still reaches back to the Series 4 (2018), and nothing in this target
+    // uses API newer than watchOS 7 anyway.
+    deploymentTarget: "10.0",
   };
 };
