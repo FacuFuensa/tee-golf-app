@@ -1,22 +1,26 @@
 import { Flag, Users, X } from "lucide-react-native";
-import React, { useState } from "react";
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+import React, { useEffect, useState } from "react";
+import { Animated, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { TeeButton } from "@/components/ui/TeeButton";
+import { TeeModal } from "@/components/ui/TeeModal";
 import { Colors, Radius, Spacing, Typography, hairline } from "@/constants/theme";
+import { usePressScale } from "@/hooks/usePressScale";
 import type { Course } from "@/types/models";
 
-/** Bottom sheet shown when a course is tapped: play solo or host a group. */
+/** Small circular icon button shared by both modals below — press-scales like everything else in these flows. */
+function CloseButton({ onPress, disabled }: { onPress: () => void; disabled?: boolean }) {
+  const { scale, onPressIn, onPressOut } = usePressScale();
+  return (
+    <Pressable onPress={onPress} onPressIn={onPressIn} onPressOut={onPressOut} disabled={disabled} hitSlop={8}>
+      <Animated.View style={[styles.close, { transform: [{ scale }] }]}>
+        <X size={20} color={Colors.primary} strokeWidth={2.4} />
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+/** Centered popup shown when a course is tapped: play solo or host a group. */
 export function StartRoundSheet({
   course,
   soloLoading,
@@ -32,20 +36,12 @@ export function StartRoundSheet({
   onHost: () => void;
   onClose: () => void;
 }) {
-  const insets = useSafeAreaInsets();
   const visible = course !== null;
   const busy = soloLoading || hostLoading;
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-    >
-      <Pressable style={styles.backdrop} onPress={busy ? undefined : onClose} />
-      <View style={[styles.sheet, { paddingBottom: insets.bottom + Spacing.lg }]}>
-        <View style={styles.grabber} />
+    <TeeModal visible={visible} onClose={onClose} dismissable={!busy}>
+      <View style={styles.body}>
         <View style={styles.sheetHead}>
           <View style={styles.rowLeft}>
             <Text style={styles.overline}>START A ROUND</Text>
@@ -53,9 +49,7 @@ export function StartRoundSheet({
               {course?.name ?? "Course"}
             </Text>
           </View>
-          <Pressable style={styles.close} onPress={onClose} hitSlop={8} disabled={busy}>
-            <X size={20} color={Colors.primary} strokeWidth={2.4} />
-          </Pressable>
+          <CloseButton onPress={onClose} disabled={busy} />
         </View>
 
         <ChoiceRow
@@ -75,7 +69,7 @@ export function StartRoundSheet({
           onPress={onHost}
         />
       </View>
-    </Modal>
+    </TeeModal>
   );
 }
 
@@ -94,26 +88,22 @@ function ChoiceRow({
   disabled: boolean;
   onPress: () => void;
 }) {
+  const { scale, onPressIn, onPressOut } = usePressScale();
   return (
-    <Pressable
-      onPress={disabled ? undefined : onPress}
-      style={({ pressed }) => [
-        styles.choice,
-        pressed && !disabled && styles.choicePressed,
-        loading && styles.choiceActive,
-      ]}
-    >
-      <View style={styles.choiceIcon}>{icon}</View>
-      <View style={styles.rowLeft}>
-        <Text style={styles.choiceTitle}>{title}</Text>
-        <Text style={styles.choiceSub}>{subtitle}</Text>
-      </View>
-      {loading ? <View style={styles.dot} /> : null}
+    <Pressable onPress={onPress} onPressIn={onPressIn} onPressOut={onPressOut} disabled={disabled}>
+      <Animated.View style={[styles.choice, loading && styles.choiceActive, { transform: [{ scale }] }]}>
+        <View style={styles.choiceIcon}>{icon}</View>
+        <View style={styles.rowLeft}>
+          <Text style={styles.choiceTitle}>{title}</Text>
+          <Text style={styles.choiceSub}>{subtitle}</Text>
+        </View>
+        {loading ? <View style={styles.dot} /> : null}
+      </Animated.View>
     </Pressable>
   );
 }
 
-/** Bottom sheet for entering a 6-character code to join a friend's round. */
+/** Centered popup for entering a 6-character code to join a friend's round. */
 export function JoinGameSheet({
   visible,
   loading,
@@ -127,8 +117,14 @@ export function JoinGameSheet({
   onJoin: (code: string) => void;
   onClose: () => void;
 }) {
-  const insets = useSafeAreaInsets();
   const [code, setCode] = useState<string>("");
+
+  // Clear the field on every fresh open, same as the old Modal's onShow did —
+  // TeeModal fully unmounts between opens, so this effect (keyed on the
+  // caller's `visible`) is what replaces that.
+  useEffect(() => {
+    if (visible) setCode("");
+  }, [visible]);
 
   const submit = (): void => {
     if (code.trim().length < 4) return;
@@ -136,74 +132,46 @@ export function JoinGameSheet({
   };
 
   return (
-    <Modal
-      visible={visible}
-      transparent
-      animationType="slide"
-      onRequestClose={onClose}
-      onShow={() => setCode("")}
-    >
-      <Pressable style={styles.backdrop} onPress={loading ? undefined : onClose} />
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined}>
-        <View style={[styles.sheet, { paddingBottom: insets.bottom + Spacing.lg }]}>
-          <View style={styles.grabber} />
-          <View style={styles.sheetHead}>
-            <View style={styles.rowLeft}>
-              <Text style={styles.overline}>JOIN A GROUP</Text>
-              <Text style={styles.sheetTitle}>Enter the code</Text>
-            </View>
-            <Pressable style={styles.close} onPress={onClose} hitSlop={8} disabled={loading}>
-              <X size={20} color={Colors.primary} strokeWidth={2.4} />
-            </Pressable>
+    <TeeModal visible={visible} onClose={onClose} dismissable={!loading}>
+      <View style={styles.body}>
+        <View style={styles.sheetHead}>
+          <View style={styles.rowLeft}>
+            <Text style={styles.overline}>JOIN A GROUP</Text>
+            <Text style={styles.sheetTitle}>Enter the code</Text>
           </View>
-
-          <TextInput
-            value={code}
-            onChangeText={(t) => setCode(t.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
-            placeholder="ABC123"
-            placeholderTextColor={Colors.textTertiary}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            maxLength={6}
-            style={styles.codeInput}
-            returnKeyType="go"
-            onSubmitEditing={submit}
-            editable={!loading}
-          />
-          {error ? <Text style={styles.error}>{error}</Text> : null}
-
-          <TeeButton
-            label="Join group"
-            onPress={submit}
-            loading={loading}
-            disabled={code.trim().length < 4}
-            style={styles.joinCta}
-            icon={<Users size={18} color={Colors.onPrimary} strokeWidth={2.4} />}
-          />
+          <CloseButton onPress={onClose} disabled={loading} />
         </View>
-      </KeyboardAvoidingView>
-    </Modal>
+
+        <TextInput
+          value={code}
+          onChangeText={(t) => setCode(t.toUpperCase().replace(/[^A-Z0-9]/g, ""))}
+          placeholder="ABC123"
+          placeholderTextColor={Colors.textTertiary}
+          autoCapitalize="characters"
+          autoCorrect={false}
+          maxLength={6}
+          style={styles.codeInput}
+          returnKeyType="go"
+          onSubmitEditing={submit}
+          editable={!loading}
+        />
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+
+        <TeeButton
+          label="Join group"
+          onPress={submit}
+          loading={loading}
+          disabled={code.trim().length < 4}
+          style={styles.joinCta}
+          icon={<Users size={18} color={Colors.onPrimary} strokeWidth={2.4} />}
+        />
+      </View>
+    </TeeModal>
   );
 }
 
 const styles = StyleSheet.create({
-  backdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: Colors.scrim },
-  sheet: {
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: Radius.xl,
-    borderTopRightRadius: Radius.xl,
-    paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.md,
-    gap: Spacing.md,
-  },
-  grabber: {
-    alignSelf: "center",
-    width: 40,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: Colors.borderStrong,
-    marginBottom: Spacing.sm,
-  },
+  body: { gap: Spacing.md },
   sheetHead: { flexDirection: "row", alignItems: "center", gap: Spacing.md },
   rowLeft: { flex: 1, gap: 3 },
   overline: { ...Typography.overline, fontSize: 10 },
@@ -226,7 +194,6 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     padding: Spacing.lg,
   },
-  choicePressed: { opacity: 0.85 },
   choiceActive: { borderColor: Colors.accent, backgroundColor: Colors.accentSoft },
   choiceIcon: {
     width: 48,
