@@ -125,6 +125,17 @@ jobs:
           fi
           echo "OK: build numbers match"
 
+          # The watch app needs its own icon, and this is checked SERVER-SIDE at
+          # upload: without it the build succeeds, the .ipa is valid, and App
+          # Store Connect rejects with "No icons found for watch application"
+          # after you have already spent the whole build. Catch it here instead.
+          if ! /usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$WATCH_APP/Info.plist" >/dev/null 2>&1; then
+            echo "FAIL: the watch app has no CFBundleIconName — App Store Connect will refuse the upload"
+            echo "Set \`icon\` in expo/targets/watch/expo-target.config.js"
+            exit 1
+          fi
+          echo "OK: watch icon declared ($(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconName' "$WATCH_APP/Info.plist"))"
+
       - name: Keep the .ipa
         uses: actions/upload-artifact@v4
         with:

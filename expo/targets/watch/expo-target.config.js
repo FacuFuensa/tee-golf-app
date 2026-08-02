@@ -70,6 +70,18 @@ module.exports = (config) => {
     // is the one that is allowed to be pretty.
     displayName: "Tee",
 
+    // A watch app needs its OWN icon. Without one the build succeeds, the .ipa
+    // is valid, every local check passes — and App Store Connect rejects the
+    // UPLOAD with "No icons found for watch application" plus a missing
+    // CFBundleIconName. It is a server-side validation, so nothing on this
+    // machine or on the build runner can catch it.
+    //
+    // Resolved relative to this target's directory (with-widget.js joins it to
+    // `props.directory`), so this points at the app's own 1024x1024 icon. That
+    // file is PNG colour type 2 — no alpha channel — which Apple requires for
+    // app icons and which the splash mark, deliberately transparent, is not.
+    icon: "../../assets/images/icon.png",
+
     // Leading-dot form is appended to the main app's bundle identifier by
     // @bacons/apple-targets (see with-widget.js: `bundleId.startsWith(".")`),
     // producing com.teegolf.app.watchkitapp — the conventional WatchKit app
