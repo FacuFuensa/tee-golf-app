@@ -73,35 +73,19 @@ jobs:
           echo "Resolved watch scheme: $SCHEME"
           echo "name=$SCHEME" >> "$GITHUB_OUTPUT"
 
-      - name: Pick an available watchOS simulator
-        id: sim
-        run: |
-          set -euo pipefail
-          # Device names change every hardware cycle (Series N, Ultra N, SE N)
-          # and the runner image's bundled runtimes shift over time.
-          # Resolving this at runtime — instead of hardcoding a device name —
-          # keeps the workflow from silently breaking on the next macos-26
-          # image bump.
-          DEVICE=$(xcrun simctl list devices available --json | node -e '
-            const data = JSON.parse(require("fs").readFileSync(0, "utf8"));
-            const names = Object.values(data.devices)
-              .flat()
-              .filter((d) => /^Apple Watch/.test(d.name))
-              .map((d) => d.name);
-            if (!names.length) {
-              console.error("No Apple Watch simulators available on this runner");
-              process.exit(1);
-            }
-            console.log(names[0]);
-          ')
-          echo "Resolved simulator: $DEVICE"
-          echo "device=$DEVICE" >> "$GITHUB_OUTPUT"
-
       - name: Build the watch target (unsigned)
         working-directory: expo/ios
         run: |
+          # `generic/platform=` compiles for the platform without resolving a
+          # concrete device. Naming one is not just unnecessary here, it is
+          # actively wrong: the runner ships the same watch model against
+          # several runtimes (Series 11 46mm on watchOS 26.2 AND 26.5), so
+          # `name=...,OS=latest` matches more than one device and xcodebuild
+          # refuses to guess — "multiple devices matched the request". The
+          # generic destination is also immune to the next image bump renaming
+          # or re-versioning whatever we happened to pick.
           xcodebuild build \
             -scheme "${{ steps.scheme.outputs.name }}" \
-            -destination "platform=watchOS Simulator,name=${{ steps.sim.outputs.device }}" \
+            -destination 'generic/platform=watchOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
