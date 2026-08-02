@@ -12,6 +12,7 @@
       "supportsTablet": false,
       "bundleIdentifier": "com.teegolf.app",
       "buildNumber": "1",
+      "appleTeamId": "RS6J29JLPS",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Tee uses your location to show live GPS distance to the green of the hole you're playing, and to sort your course list so the course you're standing on is first.",
         "ITSAppUsesNonExemptEncryption": false
@@ -112,7 +113,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#F2EDE3"
         }
-      ]
+      ],
+      "@bacons/apple-targets"
     ],
     "experiments": {
       "typedRoutes": false

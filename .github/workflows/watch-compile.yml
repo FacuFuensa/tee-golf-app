@@ -1,0 +1,107 @@
+name: Watch target compile check
+
+# Unsigned compile-only check for the Apple Watch target (expo/targets/watch).
+# The point: turn "does my Swift compile" into a ~4 minute unsigned run
+# instead of a ~20 minute signed EAS Build round trip. This workflow never
+# signs anything, never touches the main iOS app's build, and never uploads
+# anywhere — it only proves the watch target's Swift builds against a real
+# watchOS SDK.
+#
+# `expo prebuild -p ios` cannot run on the developer's Windows machine (see
+# .superpowers/sdd/watch-m1-report.md) — this workflow is also the only place
+# the generated Xcode project can be inspected at all, not just a nice-to-have
+# speedup.
+#
+# Not triggered automatically on every push — only workflow_dispatch (manual)
+# or pushes that touch the watch target/plugin config, so it doesn't burn CI
+# minutes on unrelated app changes. The developer decides when it runs.
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - "expo/targets/watch/**"
+      - "expo/app.json"
+      - "expo/package.json"
+      - "expo/package-lock.json"
+      - ".github/workflows/watch-compile.yml"
+
+jobs:
+  compile:
+    # macos-26 ships Xcode 26 / watchOS 26 simulator runtimes. Building
+    # against the newest bundled runtime is what exercises the Swift
+    # compiler; the target's own WATCHOS_DEPLOYMENT_TARGET (11.0, set in
+    # expo/targets/watch/expo-target.config.js) is a separate, older floor
+    # for which real watches can install the app — it doesn't need to match
+    # the simulator runtime used here.
+    runs-on: macos-26
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: expo/package-lock.json
+
+      - name: Install JS dependencies
+        working-directory: expo
+        run: npm ci
+
+      - name: Prebuild the iOS project (no CocoaPods, no signing)
+        working-directory: expo
+        run: npx expo prebuild -p ios --no-install
+
+      - name: Resolve the watch app scheme
+        id: scheme
+        working-directory: expo/ios
+        run: |
+          set -euo pipefail
+          SCHEME=$(xcodebuild -list -json | node -e '
+            const data = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            const schemes = (data.project && data.project.schemes) || (data.workspace && data.workspace.schemes) || [];
+            const match = schemes.find((s) => /watch/i.test(s));
+            if (!match) {
+              console.error("No watch scheme found among: " + JSON.stringify(schemes));
+              process.exit(1);
+            }
+            console.log(match);
+          ')
+          echo "Resolved watch scheme: $SCHEME"
+          echo "name=$SCHEME" >> "$GITHUB_OUTPUT"
+
+      - name: Pick an available watchOS simulator
+        id: sim
+        run: |
+          set -euo pipefail
+          # Device names change every hardware cycle (Series N, Ultra N, SE N)
+          # and the runner image's bundled runtimes shift over time.
+          # Resolving this at runtime — instead of hardcoding a device name —
+          # keeps the workflow from silently breaking on the next macos-26
+          # image bump.
+          DEVICE=$(xcrun simctl list devices available --json | node -e '
+            const data = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            const names = Object.values(data.devices)
+              .flat()
+              .filter((d) => /^Apple Watch/.test(d.name))
+              .map((d) => d.name);
+            if (!names.length) {
+              console.error("No Apple Watch simulators available on this runner");
+              process.exit(1);
+            }
+            console.log(names[0]);
+          ')
+          echo "Resolved simulator: $DEVICE"
+          echo "device=$DEVICE" >> "$GITHUB_OUTPUT"
+
+      - name: Build the watch target (unsigned)
+        working-directory: expo/ios
+        run: |
+          xcodebuild build \
+            -scheme "${{ steps.scheme.outputs.name }}" \
+            -destination "platform=watchOS Simulator,name=${{ steps.sim.outputs.device }}" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO

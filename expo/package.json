@@ -22,6 +22,7 @@
     "submit:ios": "npx --yes eas-cli@latest submit --platform ios --profile production"
   },
   "dependencies": {
+    "@bacons/apple-targets": "4.0.7",
     "@expo-google-fonts/newsreader": "^0.4.1",
     "@expo/vector-icons": "^15.0.3",
     "@nkzw/create-context-hook": "^1.1.0",
