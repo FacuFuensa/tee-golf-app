@@ -76,11 +76,17 @@ module.exports = (config) => {
     // CFBundleIconName. It is a server-side validation, so nothing on this
     // machine or on the build runner can catch it.
     //
-    // Resolved relative to this target's directory (with-widget.js joins it to
-    // `props.directory`), so this points at the app's own 1024x1024 icon. That
-    // file is PNG colour type 2 — no alpha channel — which Apple requires for
-    // app icons and which the splash mark, deliberately transparent, is not.
-    icon: "../../assets/images/icon.png",
+    // A copy of the app icon lives in THIS directory rather than being
+    // referenced across the tree. with-widget.js resolves this with
+    // `path.join(props.directory, props.icon)`, and pointing at
+    // ../../assets/images/icon.png produced no icon at all — the build
+    // succeeded and App Store Connect refused the upload. A bare filename in
+    // the target's own folder cannot resolve wrong.
+    //
+    // It is the app's 1024x1024 icon, PNG colour type 2 — no alpha channel,
+    // which Apple requires for app icons and which the splash mark,
+    // deliberately transparent, is not.
+    icon: "icon.png",
 
     // Leading-dot form is appended to the main app's bundle identifier by
     // @bacons/apple-targets (see with-widget.js: `bundleId.startsWith(".")`),
