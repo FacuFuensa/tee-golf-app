@@ -65,17 +65,20 @@ jobs:
           echo "--- targets/watch (source) ---"
           ls -la targets/watch/ || true
           echo
-          echo "--- generated watch target in ios/ ---"
-          find ios -iname '*watch*' -maxdepth 2 | head -20 || true
+          # The plugin does NOT copy the watch's files into ios/ — it leaves
+          # them in targets/watch/ and references that folder from the Xcode
+          # project. So this is where the generated asset catalog lives.
+          echo "--- everything the plugin generated under targets/watch ---"
+          find targets/watch -type f | sort || true
           echo
-          echo "--- any AppIcon.appiconset under ios/ ---"
-          find ios -name 'AppIcon.appiconset' -maxdepth 4 -print -exec ls -la {} \; || true
+          echo "--- the asset catalog's contents ---"
+          find targets/watch -name 'Contents.json' -print -exec cat {} \; || true
+          echo
+          echo "--- generated watch Info.plist ---"
+          cat targets/watch/Info.plist 2>/dev/null || echo "(none)"
           echo
           echo "--- ASSETCATALOG_COMPILER_APPICON_NAME in the project ---"
           grep -n "ASSETCATALOG_COMPILER_APPICON_NAME" ios/*.xcodeproj/project.pbxproj | head -10 || true
-          echo
-          echo "--- generated watch Info.plist ---"
-          find ios -path '*[Ww]atch*' -name 'Info.plist' -maxdepth 3 -print -exec cat {} \; | head -60 || true
 
       - name: Resolve the watch target and project
         id: scheme
