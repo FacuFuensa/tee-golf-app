@@ -79,7 +79,13 @@ interface NativeBridge {
   isAvailable: () => boolean;
   activate: () => void;
   updateContext: (json: string) => void;
-  getState: () => WatchLinkState;
+  /**
+   * Returns JSON, not an object. Every value crossing the native boundary here
+   * is a string on purpose — see the header comment in
+   * ios/TeeWatchBridgeModule.swift for the compile-time hazard that motivates
+   * it.
+   */
+  getState: () => string;
   addListener: (
     event: "onMessageFromWatch" | "onWatchStateChange",
     listener: (payload: never) => void
@@ -129,7 +135,16 @@ export function activateWatchLink(): void {
 export function getWatchLinkState(): WatchLinkState {
   if (!native) return UNAVAILABLE;
   try {
-    return native.getState();
+    const parsed: unknown = JSON.parse(native.getState());
+    if (!parsed || typeof parsed !== "object") return UNAVAILABLE;
+    const s = parsed as Partial<WatchLinkState>;
+    return {
+      supported: s.supported === true,
+      paired: s.paired === true,
+      appInstalled: s.appInstalled === true,
+      reachable: s.reachable === true,
+      activated: s.activated === true,
+    };
   } catch {
     return UNAVAILABLE;
   }
