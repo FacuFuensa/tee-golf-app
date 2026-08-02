@@ -125,6 +125,12 @@
         "projectId": "05c31e1c-a155-4d65-9a99-065087b50d12"
       }
     },
-    "owner": "facundofuensa"
+    "owner": "facundofuensa",
+    "updates": {
+      "url": "https://u.expo.dev/05c31e1c-a155-4d65-9a99-065087b50d12"
+    },
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    }
   }
 }

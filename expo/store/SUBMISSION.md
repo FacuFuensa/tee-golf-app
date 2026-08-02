@@ -715,3 +715,170 @@ simply appears in TestFlight as 1.1.0, and its App Store version record gets cre
 
 If 1.0.0 is rejected and needs a fix, set `version` back to `1.0.0` for that build, ship it, then
 return to `1.1.0`.
+
+---
+
+## 11. Over-the-air updates (EAS Update)
+
+`expo-updates` is installed and wired to the `production` EAS Update channel, published via
+`npm run update:ios -- --message "..."` locally or the `ota-update.yml` GitHub Actions workflow.
+This section is the one thing whoever ships a change has to read first: **which kind of change is
+this, and does it need a rebuild or not.**
+
+### What can ship over the air
+
+Anything that is pure JavaScript/TypeScript and assets — the interpreted layer `expo-updates`
+downloads and runs inside the existing binary:
+
+- `app/`, `components/`, `services/`, `hooks/`, `utils/`
+- Copy, layout, styling, business logic, bug fixes in any of the above
+- Images and other static assets bundled through the JS layer
+
+### What cannot ship over the air — needs a new native build
+
+Anything that changes the compiled binary itself:
+
+- **A new native module** (a new `expo install`-ed package with native code, or any package added
+  to `dependencies` that isn't pure JS)
+- **A config plugin change** — anything added to or edited in `app.json`'s `"plugins"` array
+- **`app.json`'s native configuration** — `ios`/`android` blocks: Info.plist entries, permission
+  strings, the privacy manifest (`privacyManifests`), the bundle identifier, icon/splash config
+- **The watch target** (`targets/watch/`, `@bacons/apple-targets` config) — it's a separate compiled
+  binary embedded in the `.ipa`; nothing about it is interpreted at runtime
+- **`app.json`'s `version`** — bumping it is part of the App Store release process in §10, not an
+  OTA concern, and doesn't do anything by itself either way
+
+If a change touches only the first list, `runtimeVersion.policy: "fingerprint"` (below) still
+computes the same fingerprint before and after, and the update reaches every installed binary with
+a matching native layer. If it touches the second list, the fingerprint changes, and any binary
+built before that change simply never sees the update — it keeps running its last-known-good JS
+until a new native build replaces it. That's not a bug to work around; it's the entire point of
+pinning the policy to a hash of the native surface instead of to the version string.
+
+### `runtimeVersion`: why `"fingerprint"` and not `"appVersion"`
+
+```json
+"runtimeVersion": { "policy": "fingerprint" }
+```
+
+`fingerprint` hashes the native layer — native modules, config plugins, permissions, Info.plist
+keys, the watch target, everything an `expo prebuild` would regenerate — into the runtime version
+string. An update is only ever offered to a running binary whose native surface actually matches
+the update's.
+
+The alternative (`appVersion`) keys the runtime version on `app.json`'s `version` field instead. It
+has no way to notice that an older binary is missing a native module the new JavaScript calls into —
+that isn't caught by anything, it just crashes on launch, for every installed copy that takes the
+update, with no App Store review in between to catch it first. `fingerprint` is the policy that
+makes that specific failure mode structurally impossible rather than merely unlikely.
+
+Confirmed against Expo's current docs before writing this: `fingerprint` is a supported
+`runtimeVersion.policy` enum value (alongside `nativeVersion`, `sdkVersion`, `appVersion`) in the
+SDK 54 app config schema (<https://docs.expo.dev/versions/latest/config/app/>), described at
+<https://docs.expo.dev/eas-update/runtime-versions/> as the policy that "make[s] incompatible
+updates extremely unlikely, at the cost of making it necessary to create builds more often." It
+needs no extra dependency beyond `expo-updates` itself — the hash is computed by the EAS/Expo
+tooling already in use (`eas-cli`), not by a package this project has to install.
+
+`app.json` is parsed elsewhere in this repo with plain `JSON.parse` (`store/verify-release.mjs`),
+so this config carries no inline comment the way a `.js`/`.ts` config file could — the reasoning
+above is the comment, kept here instead.
+
+### Channel wiring
+
+`eas.json`'s `production` build profile — the one that ships to TestFlight and the App Store — now
+carries `"channel": "production"`. `development` and `preview` deliberately do not: they're not
+part of the ship path, and a build profile with no channel never checks for updates at all. An
+update published to the `production` channel reaches only binaries built from the `production`
+profile, and nothing else.
+
+### Publishing
+
+```bash
+cd expo
+npm run update:ios -- --message "short description of what changed"
+```
+
+Or from GitHub: **Actions → OTA update (EAS Update, production channel) → Run workflow**, filling in
+the message. That workflow (`.github/workflows/ota-update.yml`) runs on a plain Linux runner, not
+macOS like `ios-eas-local.yml` — publishing an update only bundles JS/assets and uploads them
+(`npx expo export` under the hood), it never touches Xcode or compiles anything native, so there's
+nothing a Linux runner can't do just as well, faster and on GitHub's free tier. It takes the same
+single `EXPO_TOKEN` secret as `ios-eas-local.yml` and never echoes it.
+
+### This does not do anything until the next native build ships
+
+**`expo-updates` is itself a native module.** Installing it changes what has to be compiled into the
+binary — it is not live in any build that existed before this change. Every build currently in
+TestFlight or already submitted was compiled without it and will never check for an update, no
+matter what gets published to the `production` channel. The very first thing an update can reach is
+a binary built *after* this commit lands and goes through `ios-eas-local.yml` (or `eas build`)
+again. Publish an update before that next build ships, and correctly: nothing happens, to anyone,
+because there is no installed binary yet capable of asking for one.
+
+### The risk this creates, and the rollback command
+
+An update published to the `production` channel reaches every installed binary on that channel with
+no App Store review in between — that's the entire value of OTA updates, and it's also the risk: a
+bad update ships to everyone at once, instantly, the moment it's published.
+
+Verified against the `eas-cli` actually pinned by this project (`eas.json` requires `>= 12.0.0`) by
+running `eas update:rollback --help` and `eas update:republish --help` directly, rather than
+trusting Expo's prose docs alone:
+
+```bash
+cd expo
+npx eas-cli@latest update:rollback --platform ios
+```
+
+Run with no arguments, this is interactive: it prompts for the branch (`production`) and then for
+which kind of rollback — republish the update that was live immediately before the current one, or
+fall all the way back to the update embedded in the binary at build time. Either way, the result is
+published as the new latest update on the channel, and every client picks it up the same way it
+would pick up any other update.
+
+Scripted/non-interactive form, if a specific update group needs to be named explicitly (its ID is
+visible via `eas update:list --channel production`):
+
+```bash
+npx eas-cli@latest update:rollback <GROUP_ID> --platform ios --non-interactive -m "rollback: <why>"
+```
+
+`eas update:rollback` only steps back one update at a time (the one immediately before the current
+latest). To republish something further back in the channel's history, use `eas update:republish
+--channel production` instead — same interactive-picker shape, but it can target any past update
+group on the channel, not just the immediately preceding one.
+
+After any rollback, publishing again resumes normally — the next `eas update` call ships to every
+client on the channel, exactly as before.
+
+### Apple's position on this
+
+Over-the-air JavaScript updates are the mechanism the entire Expo/EAS Update ecosystem — and
+React Native's `CodePush` before it — is built on, and Apple permits it. The specific permission is
+the **Apple Developer Program License Agreement, §3.3.1(b)**: interpreted code may be downloaded
+into a shipped app so long as it (a) does not change the app's primary purpose by providing features
+or functionality inconsistent with what was submitted to the App Store, (b) does not create a store
+or storefront for other code or apps, and (c) does not bypass the OS's signing, sandbox, or other
+security features. That's the license clause every OTA-update tool on iOS actually relies on — this
+project's use is squarely inside it: JS/asset-only changes, no new capability the binary wasn't
+already reviewed with.
+
+The public-facing **App Store Review Guidelines §2.5.2** is the guideline reviewers cite for this
+area day to day. Verified verbatim against Apple's own page today
+(<https://developer.apple.com/app-store/review/guidelines/>):
+
+> Apps should be self-contained in their bundles, and may not read or write data outside the
+> designated container area, nor may they download, install, or execute code which introduces or
+> changes features or functionality of the app, including other apps. Educational apps designed to
+> teach, develop, or allow students to test executable code may, in limited circumstances, download
+> code provided that such code is not used for other purposes. Such apps must make the source code
+> provided by the app completely viewable and editable by the user.
+
+The public guidelines page doesn't restate the License Agreement's (a)/(b)/(c) carve-out verbatim —
+that text lives in the License Agreement itself, which isn't a page this tool can fetch (it's inside
+the paywalled Apple Developer account each member accepts). Multiple independent sources quoting it
+identically (Shorebird's own compliance docs among them) agree on both the wording and the current
+section number, §3.3.1(b). The practical rule for this project either way is the same one this whole
+section exists to enforce: ship JS and asset changes, never a change to what the app does or what
+native surface it exposes.

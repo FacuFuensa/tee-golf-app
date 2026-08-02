@@ -1,0 +1,72 @@
+name: OTA update (EAS Update, production channel)
+
+# WHY THIS RUNS ON LINUX, UNLIKE ios-eas-local.yml
+#
+# `eas build` needs Xcode, so that workflow runs on a macOS runner. This
+# workflow runs `eas update`, which only does `npx expo export` (bundle the
+# JavaScript and assets) and uploads the result to EAS's servers — no native
+# compilation happens at all. A Linux runner does that in seconds and GitHub
+# gives those away far more generously than macOS minutes, so there is no
+# reason to pay for a macOS runner here.
+#
+# This does NOT build a new binary and cannot ship anything that requires
+# one — see expo/store/SUBMISSION.md, "What can and cannot ship over the
+# air," for the exact boundary.
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: "Update message (what changed, shown in EAS Update history)"
+        type: string
+        required: true
+
+concurrency:
+  group: ota-update
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: expo/package-lock.json
+
+      - name: Install JS dependencies
+        working-directory: expo
+        run: npm ci
+
+      - name: Publish update to the production channel
+        working-directory: expo
+        env:
+          # The only secret, same one ios-eas-local.yml uses. Create it at
+          # expo.dev -> account settings -> Access tokens, then add it as
+          # EXPO_TOKEN in this repo's Actions secrets. It authenticates the
+          # CLI so it can publish to the project's "production" channel.
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # workflow_dispatch inputs go through an env var, never straight
+          # into the run script, so nothing in the message can be read as
+          # shell syntax. This repo is public, so the workflow log is too —
+          # neither this step nor any other prints EXPO_TOKEN.
+          UPDATE_MESSAGE: ${{ inputs.message }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "EXPO_TOKEN is not set. Create it at expo.dev -> Access tokens"
+            echo "and add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          npx --yes eas-cli@latest update \
+            --channel production \
+            --platform ios \
+            --message "$UPDATE_MESSAGE" \
+            --non-interactive
