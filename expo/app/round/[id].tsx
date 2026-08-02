@@ -25,6 +25,7 @@ import { Links, reportMailto } from "@/constants/links";
 import { Colors, Fonts, Radius, Spacing, Typography, hairline } from "@/constants/theme";
 import { useClubs } from "@/hooks/useClubs";
 import { useLiveLocation } from "@/hooks/useLiveLocation";
+import { usePressScale } from "@/hooks/usePressScale";
 import { useActiveRound } from "@/providers/ActiveRoundProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { useBlockedPlayers } from "@/providers/BlockedPlayersProvider";
@@ -43,6 +44,8 @@ import { fetchWeather } from "@/services/weather";
 import type { Weather } from "@/services/weather";
 import { isWeatherConfigured } from "@/services/weatherConfig";
 import type { Club, Hole } from "@/types/models";
+import { computeAimShot } from "@/utils/aim";
+import type { AimShot } from "@/utils/aim";
 import { CADDY_CONFIG, computePlaysLike, recommendClub } from "@/utils/caddy";
 import type { ClubRecommendation, PlaysLikeBreakdown } from "@/utils/caddy";
 import { formatDistance, haversineMeters, metersToUnit, unitLabel, unitShort } from "@/utils/geo";
@@ -260,13 +263,22 @@ export default function PlayRoundScreen() {
     currentHole.green_lat != null &&
     currentHole.green_lng != null;
 
+  // Stable object reference (memoized on the hole, not recreated every render)
+  // so it's safe to use as a dependency below without causing extra recompute.
+  const greenCoordinate = useMemo<{ latitude: number; longitude: number } | null>(() => {
+    if (!currentHole || currentHole.green_lat == null || currentHole.green_lng == null) {
+      return null;
+    }
+    return { latitude: currentHole.green_lat, longitude: currentHole.green_lng };
+  }, [currentHole]);
+
   const distanceMeters =
-    location.coords && currentHole && hasGreen
+    location.coords && greenCoordinate
       ? haversineMeters(
           location.coords.latitude,
           location.coords.longitude,
-          currentHole.green_lat as number,
-          currentHole.green_lng as number
+          greenCoordinate.latitude,
+          greenCoordinate.longitude
         )
       : null;
 
@@ -276,25 +288,50 @@ export default function PlayRoundScreen() {
   // an explicit off-course state instead.
   const offCourse = distanceMeters != null && distanceMeters > OFF_COURSE_METERS;
 
+  // A temporary, unpersisted target the golfer can drop short of the green —
+  // "the green is 700 out, but I want to know the distance to that bunker."
+  // Local state only: no DB write, no AsyncStorage, gone the moment the hole
+  // changes (see the effect below) or the round is left.
+  const [aimPoint, setAimPoint] = useState<{ latitude: number; longitude: number } | null>(null);
+
+  // A temporary aim point only means something on the hole it was dropped on.
+  useEffect(() => {
+    setAimPoint(null);
+  }, [holeIndex]);
+
+  // The two numbers an aim point is for: the shot to it, and what's left after.
+  // Computed independently of each other (see computeAimShot) so "what's left"
+  // doesn't wait on a GPS fix it doesn't actually need.
+  const aimShot = useMemo<AimShot | null>(() => {
+    if (!aimPoint) return null;
+    return computeAimShot(
+      location.coords
+        ? { latitude: location.coords.latitude, longitude: location.coords.longitude }
+        : null,
+      aimPoint,
+      greenCoordinate
+    );
+  }, [aimPoint, location.coords, greenCoordinate]);
+
+  // What the Smart Caddy is actually shooting at: the aim point when one is
+  // set, otherwise the green — exactly as before. Wind/temperature handling
+  // in computePlaysLike is untouched; only this target changes.
+  const caddyTarget = aimPoint ?? greenCoordinate;
+  const caddyTargetMeters = aimPoint ? aimShot?.toAimMeters ?? null : distanceMeters;
+
   // Plays-like distance: converts the raw GPS distance into what the shot really
   // plays given temperature + wind along the shot line.
   const playsLike = useMemo<PlaysLikeBreakdown | null>(() => {
-    if (
-      distanceMeters == null ||
-      !location.coords ||
-      !currentHole ||
-      currentHole.green_lat == null ||
-      currentHole.green_lng == null
-    ) {
+    if (caddyTargetMeters == null || !location.coords || !caddyTarget) {
       return null;
     }
     return computePlaysLike(
-      distanceMeters,
+      caddyTargetMeters,
       { latitude: location.coords.latitude, longitude: location.coords.longitude },
-      { latitude: currentHole.green_lat, longitude: currentHole.green_lng },
+      caddyTarget,
       weather
     );
-  }, [distanceMeters, location.coords, currentHole, weather]);
+  }, [caddyTargetMeters, location.coords, caddyTarget, weather]);
 
   const recommendedClub = useMemo<ClubRecommendation | null>(
     () => (playsLike ? recommendClub(playsLike.playsLikeMeters, clubs) : null),
@@ -310,19 +347,32 @@ export default function PlayRoundScreen() {
     });
   };
 
-  const [picking, setPicking] = useState<boolean>(false);
+  // Which full-screen map picker is open, if any — the same picker handles
+  // both jobs, just aimed at a different target (see MapPointPicker below).
+  const [pickerMode, setPickerMode] = useState<"green" | "aim" | null>(null);
+  // Press feedback for the "Aim" badge on the hole map card (see usePressScale).
+  const aimBadgeAnim = usePressScale();
 
-  // Static satellite preview of the mapped green for the current hole.
-  const greenPreview = useMemo<{ region: MapRegion; markers: { id: string; coordinate: { latitude: number; longitude: number }; label: string }[] } | null>(() => {
+  // Static satellite preview of the mapped green for the current hole, plus
+  // the aim point when one is set — given its own unlabeled marker (a small
+  // gold dot) so it's never mistaken for the numbered green pin.
+  const greenPreview = useMemo<{ region: MapRegion; markers: { id: string; coordinate: { latitude: number; longitude: number }; label?: string }[] } | null>(() => {
     if (!currentHole || currentHole.green_lat == null || currentHole.green_lng == null) {
       return null;
     }
     const coordinate = { latitude: currentHole.green_lat, longitude: currentHole.green_lng };
-    return {
-      region: { ...coordinate, latitudeDelta: 0.0016, longitudeDelta: 0.0016 },
-      markers: [{ id: "green", coordinate, label: String(currentHole.number) }],
-    };
-  }, [currentHole]);
+    const markers: { id: string; coordinate: { latitude: number; longitude: number }; label?: string }[] = [
+      { id: "green", coordinate, label: String(currentHole.number) },
+    ];
+    if (aimPoint) markers.push({ id: "aim", coordinate: aimPoint });
+    // Zoom tight on the green alone when there's no aim point (unchanged from
+    // before); once one is set, frame both pins so a layup well short of the
+    // green doesn't fall outside the preview.
+    const region = aimPoint
+      ? boundingRegion([coordinate, aimPoint], 0.0016)
+      : { ...coordinate, latitudeDelta: 0.0016, longitudeDelta: 0.0016 };
+    return { region, markers };
+  }, [currentHole, aimPoint]);
 
   // Where to center the green picker for an UNMAPPED hole: stay on THIS course
   // instead of jumping to the player's live GPS. Prefer the centroid of greens
@@ -362,13 +412,35 @@ export default function PlayRoundScreen() {
       }));
   }, [holes, currentHole]);
 
-  const onPickFromMap = (lat: number, lng: number): void => {
-    if (!currentHole) return;
-    setGreen.mutate(
-      { holeId: currentHole.id, lat, lng },
-      { onSuccess: () => setPicking(false) }
-    );
+  // The picker reports back a single lat/lng regardless of mode; what happens
+  // with it depends on what we opened it for.
+  const onConfirmPicker = (lat: number, lng: number): void => {
+    if (pickerMode === "green") {
+      if (!currentHole) return;
+      setGreen.mutate(
+        { holeId: currentHole.id, lat, lng },
+        { onSuccess: () => setPickerMode(null) }
+      );
+      return;
+    }
+    if (pickerMode === "aim") {
+      // No mutation — an aim point is never written anywhere.
+      setAimPoint({ latitude: lat, longitude: lng });
+      notifySuccess();
+      setPickerMode(null);
+    }
   };
+
+  // Reference marker(s) shown inside the picker while placing an aim point:
+  // this hole's own green, so the golfer can see it relative to where they're
+  // aiming. Reuses the same numbered-pin styling as the green picker's
+  // reference greens, since it's the same kind of "context, not the target" pin.
+  const aimReference = useMemo<
+    { id: string; coordinate: { latitude: number; longitude: number }; label: string }[]
+  >(() => {
+    if (!greenCoordinate || !currentHole) return [];
+    return [{ id: "green", coordinate: greenCoordinate, label: String(currentHole.number) }];
+  }, [greenCoordinate, currentHole]);
 
   const displayYardage =
     currentHole?.yardage != null
@@ -554,11 +626,20 @@ export default function PlayRoundScreen() {
           canSetGreen={location.coords !== null}
           settingGreen={setGreen.isPending}
           onSetGreen={onSetGreenHere}
-          onPickOnMap={() => setPicking(true)}
+          onPickOnMap={() => setPickerMode("green")}
+          onAim={() => {
+            tapLight();
+            setPickerMode("aim");
+          }}
+          hasAim={aimPoint != null}
           onEnable={() => Linking.openSettings()}
           onRetry={location.retry}
         />
-        {hasGreen && !offCourse && distanceMeters != null && playsLike && (clubs.length > 0 || playsLike.hasWeather) ? (
+        {/* Caddy target follows the aim point when one is set (see caddyTarget
+            above) — `!offCourse` still gates it: an aim point is placed on the
+            course itself, so if the golfer isn't there, a distance to it is as
+            meaningless as one to the green would be. */}
+        {!offCourse && playsLike && (clubs.length > 0 || playsLike.hasWeather) ? (
           <CaddyBlock
             breakdown={playsLike}
             weather={weather}
@@ -575,6 +656,19 @@ export default function PlayRoundScreen() {
             }}
           />
         ) : null}
+        {aimPoint && aimShot ? (
+          <AimBlock
+            unit={unit}
+            aimShot={aimShot}
+            offCourse={offCourse}
+            hasFix={location.coords != null}
+            hasGreen={hasGreen}
+            onClear={() => {
+              tapLight();
+              setAimPoint(null);
+            }}
+          />
+        ) : null}
         {hasGreen && greenPreview ? (
           <View style={styles.holeMapCard}>
             <SatelliteMap
@@ -588,13 +682,32 @@ export default function PlayRoundScreen() {
               style={StyleSheet.absoluteFill}
               onPress={() => {
                 tapLight();
-                setPicking(true);
+                setPickerMode("green");
               }}
             />
             <View pointerEvents="none" style={styles.holeMapBadge}>
               <MapPin size={13} color={Colors.onPrimary} strokeWidth={2.4} />
               <Text style={styles.holeMapBadgeText}>Adjust green</Text>
             </View>
+            <Pressable
+              style={styles.aimBadge}
+              onPress={() => {
+                tapLight();
+                setPickerMode("aim");
+              }}
+              onPressIn={aimBadgeAnim.onPressIn}
+              onPressOut={aimBadgeAnim.onPressOut}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel={aimPoint ? "Edit aim point" : "Aim at a point"}
+            >
+              <Animated.View
+                style={[styles.aimBadgeInner, { transform: [{ scale: aimBadgeAnim.scale }] }]}
+              >
+                <Crosshair size={13} color={Colors.onAccent} strokeWidth={2.4} />
+                <Text style={styles.aimBadgeText}>{aimPoint ? "Edit aim" : "Aim"}</Text>
+              </Animated.View>
+            </Pressable>
           </View>
         ) : null}
       </View>
@@ -700,24 +813,21 @@ export default function PlayRoundScreen() {
         onCancel={() => setExitPrompt(null)}
       />
 
-      {picking && currentHole ? (
-        <GreenPicker
+      {pickerMode && currentHole ? (
+        <MapPointPicker
+          mode={pickerMode}
           holeNumber={currentHole.number}
-          initial={
-            currentHole.green_lat != null && currentHole.green_lng != null
-              ? { latitude: currentHole.green_lat, longitude: currentHole.green_lng }
-              : null
-          }
+          initial={pickerMode === "aim" ? aimPoint : greenCoordinate}
           courseCenter={
             courseAnchor ??
             (location.coords
               ? { latitude: location.coords.latitude, longitude: location.coords.longitude }
               : null)
           }
-          reference={referenceGreens}
-          saving={setGreen.isPending}
-          onCancel={() => setPicking(false)}
-          onConfirm={onPickFromMap}
+          reference={pickerMode === "aim" ? aimReference : referenceGreens}
+          saving={pickerMode === "green" && setGreen.isPending}
+          onCancel={() => setPickerMode(null)}
+          onConfirm={onConfirmPicker}
         />
       ) : null}
     </View>
@@ -932,7 +1042,14 @@ function LeaderboardModal({
   );
 }
 
-function GreenPicker({
+/**
+ * Full-screen map picker shared by both "set the green" and "aim at a point" —
+ * same map, same confirm/cancel shape, same crosshair mechanic. Only the
+ * labels, the confirm action, and the reticle color (so a mid-placement aim
+ * point is never visually mistaken for a green) change with `mode`.
+ */
+function MapPointPicker({
+  mode,
   holeNumber,
   initial,
   courseCenter,
@@ -941,6 +1058,7 @@ function GreenPicker({
   onCancel,
   onConfirm,
 }: {
+  mode: "green" | "aim";
   holeNumber: number;
   initial: { latitude: number; longitude: number } | null;
   courseCenter: { latitude: number; longitude: number } | null;
@@ -950,9 +1068,10 @@ function GreenPicker({
   onConfirm: (lat: number, lng: number) => void;
 }) {
   const insets = useSafeAreaInsets();
-  // Zoom priority: an exact point (existing green or live GPS) gets a tight,
-  // green-level view; otherwise center on the course and zoom to the property
-  // so the golfer can find the hole instead of staring at the whole planet.
+  const isAim = mode === "aim";
+  // Zoom priority: an exact point (existing green/aim point, or live GPS) gets
+  // a tight view; otherwise center on the course and zoom to the property so
+  // the golfer can find the hole instead of staring at the whole planet.
   const center = initial ?? courseCenter;
   const tight = initial != null;
   const delta = tight ? 0.0022 : 0.014;
@@ -966,9 +1085,11 @@ function GreenPicker({
   const markers = useMemo(
     () => [
       ...reference,
-      ...(initial ? [{ id: "green", coordinate: initial }] : []),
+      // Unlabeled -> the small gold dot, marking the point currently being
+      // adjusted (an existing green, or a previously-placed aim point).
+      ...(initial ? [{ id: mode, coordinate: initial }] : []),
     ],
-    [initial, reference],
+    [initial, reference, mode],
   );
 
   return (
@@ -984,7 +1105,9 @@ function GreenPicker({
 
       <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.reticleWrap]}>
         <View style={styles.reticleRing}>
-          <View style={styles.reticleDot} />
+          {/* Gold for an aim point, the usual accent green for the green
+              itself — the same distinction carried by the markers elsewhere. */}
+          <View style={[styles.reticleDot, isAim && styles.reticleDotAim]} />
         </View>
       </View>
 
@@ -994,7 +1117,7 @@ function GreenPicker({
             <X size={20} color={Colors.primary} strokeWidth={2.4} />
           </Pressable>
           <View style={styles.pickerTopInfo}>
-            <Text style={styles.pickerOverline}>SET GREEN</Text>
+            <Text style={styles.pickerOverline}>{isAim ? "AIM POINT" : "SET GREEN"}</Text>
             <Text style={styles.pickerHole}>Hole {holeNumber}</Text>
           </View>
           <View style={styles.pickerClose} />
@@ -1004,13 +1127,15 @@ function GreenPicker({
       <View style={[styles.pickerBottom, { paddingBottom: insets.bottom + Spacing.lg }]}>
         <View style={styles.pickerBottomCard}>
           <View style={styles.bottomHint}>
-            <Crosshair size={16} color={Colors.accent} strokeWidth={2.4} />
+            <Crosshair size={16} color={isAim ? Colors.gold : Colors.accent} strokeWidth={2.4} />
             <Text style={styles.bottomHintText}>
-              Drag the map so the crosshair sits on the middle of the green, then save.
+              {isAim
+                ? "Drag the map so the crosshair sits where you want to aim, then save. It won't be saved to the round — just for this hole, right now."
+                : "Drag the map so the crosshair sits on the middle of the green, then save."}
             </Text>
           </View>
           <TeeButton
-            label="Save green"
+            label={isAim ? "Set aim point" : "Save green"}
             loading={saving}
             onPress={() => onConfirm(regionRef.current.latitude, regionRef.current.longitude)}
           />
@@ -1032,6 +1157,8 @@ function DistanceDisplay({
   settingGreen,
   onSetGreen,
   onPickOnMap,
+  onAim,
+  hasAim,
   onEnable,
   onRetry,
 }: {
@@ -1046,9 +1173,14 @@ function DistanceDisplay({
   settingGreen: boolean;
   onSetGreen: () => void;
   onPickOnMap: () => void;
+  /** Opens the same map picker in aim mode — reachable even with no green pinned. */
+  onAim: () => void;
+  hasAim: boolean;
   onEnable: () => void;
   onRetry: () => void;
 }) {
+  const aimLinkAnim = usePressScale();
+
   if (status === "denied") {
     return (
       <View style={styles.stateBlock}>
@@ -1113,6 +1245,26 @@ function DistanceDisplay({
               </Text>
             </>
           )}
+        </Pressable>
+        {/* Distance to an arbitrary point doesn't need a green — only "what's
+            left" does, and AimBlock handles that being unknowable on its own. */}
+        <Pressable
+          style={styles.aimLink}
+          onPress={onAim}
+          onPressIn={aimLinkAnim.onPressIn}
+          onPressOut={aimLinkAnim.onPressOut}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel={hasAim ? "Edit aim point" : "Aim at a point on the map"}
+        >
+          <Animated.View
+            style={[styles.aimLinkInner, { transform: [{ scale: aimLinkAnim.scale }] }]}
+          >
+            <Crosshair size={15} color={Colors.gold} strokeWidth={2.2} />
+            <Text style={[styles.setHereLinkText, { color: Colors.gold }]}>
+              {hasAim ? "Edit aim point" : "Aim at a point instead"}
+            </Text>
+          </Animated.View>
         </Pressable>
       </View>
     );
@@ -1450,6 +1602,78 @@ function CaddyFactor({
   );
 }
 
+/**
+ * The two numbers a temporary aim point exists for: the shot about to be hit,
+ * and what's left after it. Gold-tinted throughout to match the aim marker,
+ * so this card, the badge that opened it, and the pin on the map all read as
+ * the same thing at a glance — distinct from the green's own accent green.
+ */
+function AimBlock({
+  unit,
+  aimShot,
+  offCourse,
+  hasFix,
+  hasGreen,
+  onClear,
+}: {
+  unit: "yards" | "meters";
+  aimShot: AimShot;
+  offCourse: boolean;
+  hasFix: boolean;
+  hasGreen: boolean;
+  onClear: () => void;
+}) {
+  const clearAnim = usePressScale();
+
+  const toAimText =
+    !hasFix
+      ? "Waiting for GPS…"
+      : offCourse
+        ? "Get on course to measure"
+        : aimShot.toAimMeters != null
+          ? `${formatDistance(aimShot.toAimMeters, unit)} ${unitShort(unit)} to aim`
+          : "Waiting for GPS…";
+
+  // The remaining leg doesn't depend on the player's position at all, so it's
+  // shown even off-course or before a fix — only a missing green makes it
+  // unknowable, and that's said plainly rather than left blank.
+  const leftText = !hasGreen
+    ? "Green isn't mapped, so no distance left to show"
+    : aimShot.aimToGreenMeters != null
+      ? `${formatDistance(aimShot.aimToGreenMeters, unit)} ${unitShort(unit)} left to green`
+      : "";
+
+  return (
+    <View style={styles.aimCard}>
+      <View style={styles.aimIcon}>
+        <Crosshair size={18} color={Colors.gold} strokeWidth={2.4} />
+      </View>
+      <View style={styles.aimInfo}>
+        <Text style={styles.aimTitle} numberOfLines={1}>
+          {toAimText}
+        </Text>
+        {leftText ? (
+          <Text style={styles.aimReason} numberOfLines={1}>
+            {leftText}
+          </Text>
+        ) : null}
+      </View>
+      <Pressable
+        onPress={onClear}
+        onPressIn={clearAnim.onPressIn}
+        onPressOut={clearAnim.onPressOut}
+        hitSlop={8}
+        accessibilityRole="button"
+        accessibilityLabel="Clear aim point"
+      >
+        <Animated.View style={[styles.aimClear, { transform: [{ scale: clearAnim.scale }] }]}>
+          <X size={16} color={Colors.textSecondary} strokeWidth={2.4} />
+        </Animated.View>
+      </Pressable>
+    </View>
+  );
+}
+
 function NavArrow({
   disabled,
   onPress,
@@ -1511,6 +1735,32 @@ function HoleChip({
 }
 
 /** Helpers ---------------------------------------------------------------- */
+
+/**
+ * Smallest map region containing every point, with margin so pins don't sit
+ * flush against the card edge. Used for the hole map preview so an aim point
+ * placed well short of the green still lands in frame alongside it — the
+ * green-only preview stays a fixed tight zoom (see greenPreview) since that
+ * behavior must not change when there's no aim point.
+ */
+function boundingRegion(
+  points: { latitude: number; longitude: number }[],
+  minDelta: number
+): MapRegion {
+  const lats = points.map((p) => p.latitude);
+  const lngs = points.map((p) => p.longitude);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  const margin = 1.6;
+  return {
+    latitude: (minLat + maxLat) / 2,
+    longitude: (minLng + maxLng) / 2,
+    latitudeDelta: Math.max((maxLat - minLat) * margin, minDelta),
+    longitudeDelta: Math.max((maxLng - minLng) * margin, minDelta),
+  };
+}
 
 interface Summary {
   played: number;
@@ -1636,6 +1886,10 @@ const styles = StyleSheet.create({
     height: 24,
   },
   setHereLinkText: { ...Typography.callout, fontWeight: "600" },
+  // Outer Pressable carries just position/spacing; the transform lives on the
+  // inner view, matching the app's usePressScale pattern elsewhere.
+  aimLink: { marginTop: Spacing.sm },
+  aimLinkInner: { flexDirection: "row", alignItems: "center", gap: 6, height: 24 },
   caddyCard: {
     width: "100%",
     flexDirection: "row",
@@ -1661,6 +1915,43 @@ const styles = StyleSheet.create({
   caddyTitle: { ...Typography.headline, fontSize: 16 },
   caddyPlays: { ...Typography.callout, color: Colors.textSecondary, fontWeight: "600" },
   caddyReason: { ...Typography.subhead, color: Colors.textTertiary },
+
+  // Same shape as caddyCard, gold-tinted instead of accent-tinted so an aim
+  // point never reads as "another caddy card" — it's a distinct, secondary
+  // thing that can be dismissed, which is why it ends in a clear button
+  // instead of a chevron.
+  aimCard: {
+    width: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+    marginTop: Spacing.sm,
+    backgroundColor: Colors.surface,
+    borderRadius: Radius.md,
+    borderWidth: hairline,
+    borderColor: Colors.borderStrong,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.md,
+  },
+  aimIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.goldSoft,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  aimInfo: { flex: 1, gap: 2 },
+  aimTitle: { ...Typography.headline, fontSize: 16 },
+  aimReason: { ...Typography.subhead, color: Colors.textTertiary },
+  aimClear: {
+    width: 32,
+    height: 32,
+    borderRadius: Radius.pill,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: Colors.primarySoft,
+  },
 
   caddySheet: {
     position: "absolute",
@@ -1744,6 +2035,19 @@ const styles = StyleSheet.create({
     backgroundColor: "rgba(28,58,43,0.78)",
   },
   holeMapBadgeText: { color: Colors.onPrimary, fontSize: 12, fontWeight: "700" },
+  // Opposite corner from "Adjust green" so the two never overlap. Outer
+  // Pressable is just position; aimBadgeInner carries the visual + transform.
+  aimBadge: { position: "absolute", right: Spacing.md, top: Spacing.md },
+  aimBadgeInner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: Radius.pill,
+    backgroundColor: Colors.gold,
+  },
+  aimBadgeText: { color: Colors.onAccent, fontSize: 12, fontWeight: "700" },
 
   reticleWrap: { alignItems: "center", justifyContent: "center" },
   reticleRing: {
@@ -1761,6 +2065,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
   },
   reticleDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.accent },
+  reticleDotAim: { backgroundColor: Colors.gold },
   savedPin: {
     width: 16,
     height: 16,

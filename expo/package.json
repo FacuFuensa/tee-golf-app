@@ -15,6 +15,7 @@
     "verify:release:full": "node store/verify-release.mjs --bundle",
     "verify:backend": "node store/verify-backend.mjs",
     "verify:scorecard": "node store/verify-scorecard.mjs",
+    "verify:aim": "node store/verify-aim.mjs",
     "verify:finish": "node store/verify-finish-round.mjs",
     "eas": "npx --yes eas-cli@latest",
     "build:ios": "npx --yes eas-cli@latest build --platform ios --profile production",
