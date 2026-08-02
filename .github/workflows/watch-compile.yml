@@ -55,6 +55,28 @@ jobs:
         working-directory: expo
         run: npx expo prebuild -p ios --no-install
 
+      - name: Report the watch target's icon state
+        working-directory: expo
+        run: |
+          # Diagnostic, and permanent. The watch app's icon is validated
+          # SERVER-SIDE at upload — a missing one costs a full build plus an
+          # App Store Connect rejection to discover. This shows, in about a
+          # second, whether the plugin actually produced an asset catalog.
+          echo "--- targets/watch (source) ---"
+          ls -la targets/watch/ || true
+          echo
+          echo "--- generated watch target in ios/ ---"
+          find ios -iname '*watch*' -maxdepth 2 | head -20 || true
+          echo
+          echo "--- any AppIcon.appiconset under ios/ ---"
+          find ios -name 'AppIcon.appiconset' -maxdepth 4 -print -exec ls -la {} \; || true
+          echo
+          echo "--- ASSETCATALOG_COMPILER_APPICON_NAME in the project ---"
+          grep -n "ASSETCATALOG_COMPILER_APPICON_NAME" ios/*.xcodeproj/project.pbxproj | head -10 || true
+          echo
+          echo "--- generated watch Info.plist ---"
+          find ios -path '*[Ww]atch*' -name 'Info.plist' -maxdepth 3 -print -exec cat {} \; | head -60 || true
+
       - name: Resolve the watch target and project
         id: scheme
         working-directory: expo/ios
