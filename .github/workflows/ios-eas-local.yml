@@ -1,0 +1,150 @@
+name: iOS build (EAS local on a GitHub runner)
+
+# WHY THIS EXISTS, ALONGSIDE ios-release.yml
+#
+# `ios-release.yml` signs the app by hand: it needs the distribution
+# certificate and an App Store Connect API key as five GitHub secrets. That
+# works, but it means lifting credentials out of EAS — where they already live
+# and are already managed — and re-entering them somewhere else.
+#
+# `eas build --local` runs the SAME build EAS would run, on this runner instead
+# of theirs. Expo's own servers still hold and hand over the signing
+# credentials, so the only secret here is an Expo access token.
+#
+# Two things are unverified and this workflow exists to settle them, because
+# neither is stated in Expo's documentation:
+#
+#   1. Whether a --local build consumes the account's monthly EAS build quota.
+#      It should not — the quota pays for Expo's build workers and this uses
+#      none of them — but "should not" is not evidence.
+#   2. Whether --local fetches iOS signing credentials from EAS
+#      non-interactively, or demands a local credentials.json.
+#
+# If both come out right, this replaces ios-release.yml and its five secrets
+# with one. If either does not, ios-release.yml is already written and works.
+
+on:
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "eas.json build profile"
+        type: string
+        default: production
+      submit:
+        description: "Upload to App Store Connect when the build succeeds"
+        type: boolean
+        default: false
+
+concurrency:
+  group: ios-eas-local
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # Apple tooling only exists on macOS runners. Public repositories get these
+    # free, which is the entire reason this path is worth trying.
+    runs-on: macos-26
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: expo/package-lock.json
+
+      - name: Install JS dependencies
+        working-directory: expo
+        run: npm ci
+
+      - name: Report the toolchain
+        run: |
+          echo "Xcode:     $(xcodebuild -version | head -1)"
+          echo "fastlane:  $(fastlane --version 2>/dev/null | grep -i 'fastlane [0-9]' || echo 'not found')"
+          echo "CocoaPods: $(pod --version 2>/dev/null || echo 'not found')"
+          # `eas build --local` shells out to fastlane and CocoaPods. They ship
+          # on the macOS runner image, but say so out loud — a missing one fails
+          # deep inside the build with a much worse error message.
+
+      - name: Build with EAS, locally
+        working-directory: expo
+        env:
+          # The only secret. Create it at expo.dev -> account settings ->
+          # Access tokens, then add it as EXPO_TOKEN in this repo's Actions
+          # secrets. It authenticates the CLI so it can pull down the signing
+          # credentials Expo already holds for this project.
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${EXPO_TOKEN:-}" ]; then
+            echo "EXPO_TOKEN is not set. Create it at expo.dev -> Access tokens"
+            echo "and add it under Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/out"
+          npx --yes eas-cli@latest build \
+            --platform ios \
+            --profile "${{ inputs.profile }}" \
+            --local \
+            --non-interactive \
+            --output "$RUNNER_TEMP/out/tee.ipa"
+
+      - name: Confirm the watch app is inside the .ipa
+        run: |
+          set -euo pipefail
+          # The failure this catches is silent: if the watch target is not
+          # embedded, the .ipa builds and uploads cleanly and the watch simply
+          # never appears in TestFlight, with no error anywhere to explain it.
+          WORK="$RUNNER_TEMP/ipacheck"
+          rm -rf "$WORK" && mkdir -p "$WORK"
+          unzip -q "$RUNNER_TEMP/out/tee.ipa" -d "$WORK"
+          APP=$(find "$WORK/Payload" -maxdepth 1 -name '*.app' | head -1)
+          echo "App bundle: $APP"
+          if [ -d "$APP/Watch" ]; then
+            find "$APP/Watch" -maxdepth 2 -name '*.app' -print
+            echo "OK: a watch app is embedded"
+          else
+            echo "FAIL: no Watch directory in the .ipa — the watch app is not embedded"
+            exit 1
+          fi
+
+          # Both bundles must carry the same CFBundleVersion or App Store
+          # Connect rejects the upload with error 90379, after the build.
+          APP_V=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP/Info.plist")
+          WATCH_APP=$(find "$APP/Watch" -maxdepth 1 -name '*.app' | head -1)
+          WATCH_V=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$WATCH_APP/Info.plist")
+          echo "iOS CFBundleVersion:   $APP_V"
+          echo "watch CFBundleVersion: $WATCH_V"
+          if [ "$APP_V" != "$WATCH_V" ]; then
+            echo "FAIL: CFBundleVersion mismatch — Apple would reject this with 90379"
+            exit 1
+          fi
+          echo "OK: build numbers match"
+
+      - name: Keep the .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: tee-ios-ipa
+          path: ${{ runner.temp }}/out/tee.ipa
+          if-no-files-found: error
+          # Public repo: anyone with the run URL can download this. It holds no
+          # private key, and its only job is recovering a failed upload.
+          retention-days: 1
+
+      - name: Upload to App Store Connect
+        if: ${{ inputs.submit }}
+        working-directory: expo
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          # eas submit does not consume build quota — it only uploads a binary.
+          npx --yes eas-cli@latest submit \
+            --platform ios \
+            --profile "${{ inputs.profile }}" \
+            --path "$RUNNER_TEMP/out/tee.ipa" \
+            --non-interactive
