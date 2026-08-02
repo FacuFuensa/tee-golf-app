@@ -32,21 +32,33 @@ export function GroupCard({ courseName, date, entries }: GroupCardProps) {
       <View style={styles.list}>
         {shown.map((entry, index) => (
           <View key={entry.profileId} style={[styles.row, index > 0 && styles.rowDivided]}>
-            <Text style={styles.position}>{index + 1}</Text>
+            <Text style={styles.position} numberOfLines={1}>
+              {index + 1}
+            </Text>
             <Text style={styles.name} numberOfLines={1}>
               {entry.name}
             </Text>
-            <Text style={styles.thru}>thru {entry.thru}</Text>
+            <Text style={styles.thru} numberOfLines={1}>
+              thru {entry.thru}
+            </Text>
             {/* A seated player with zero scored holes has no score to report —
                 printing 0/Even would attach a fabricated round to their name. */}
-            <Text style={styles.total}>{entry.thru === 0 ? "—" : entry.total}</Text>
-            <Text style={styles.toPar}>{entry.thru === 0 ? "—" : formatToPar(entry.toPar)}</Text>
+            <Text style={styles.total} numberOfLines={1}>
+              {entry.thru === 0 ? "—" : entry.total}
+            </Text>
+            <Text style={styles.toPar} numberOfLines={1}>
+              {entry.thru === 0 ? "—" : formatToPar(entry.toPar)}
+            </Text>
           </View>
         ))}
-        {overflow > 0 ? <Text style={styles.footer}>+{overflow} more</Text> : null}
+        {overflow > 0 ? (
+          <Text style={styles.footer} numberOfLines={1}>
+            +{overflow} more
+          </Text>
+        ) : null}
       </View>
 
-      <Text style={styles.footer}>
+      <Text style={styles.footer} numberOfLines={1}>
         {entries.length} {entries.length === 1 ? "player" : "players"}
       </Text>
     </View>
@@ -69,7 +81,13 @@ const styles = StyleSheet.create({
   position: { fontFamily: Fonts.serifBold, fontSize: 13, color: Colors.accent, width: 16 },
   name: { flex: 1, fontFamily: Fonts.serifSemibold, fontSize: 16, color: Colors.onPrimary },
   thru: { fontFamily: Fonts.serifRegular, fontSize: 11, color: Colors.onPrimary, opacity: 0.55 },
-  total: { fontFamily: Fonts.serifSemibold, fontSize: 18, color: Colors.onPrimary, width: 30, textAlign: "right" },
-  toPar: { fontFamily: Fonts.serifSemibold, fontSize: 13, color: Colors.accent, width: 40, textAlign: "right" },
+  // Row width budget, at CARD_WIDTH 340 with Spacing.xl padding each side:
+  // 292 usable, minus position 16 + thru ~40 + total 38 + toPar 42 and four
+  // Spacing.sm gaps (32) leaves ~124 for the name. The totals were 30 and 40,
+  // and a three-digit score like 113 at fontSize 18 measures right at 30 — so
+  // it wrapped onto a second line in the exported image. Widened with room to
+  // spare, and every Text in this card is numberOfLines={1} as a backstop.
+  total: { fontFamily: Fonts.serifSemibold, fontSize: 18, color: Colors.onPrimary, width: 38, textAlign: "right" },
+  toPar: { fontFamily: Fonts.serifSemibold, fontSize: 13, color: Colors.accent, width: 42, textAlign: "right" },
   footer: { fontFamily: Fonts.serifRegular, fontSize: 11, color: Colors.onPrimary, opacity: 0.6, textAlign: "center" },
 });

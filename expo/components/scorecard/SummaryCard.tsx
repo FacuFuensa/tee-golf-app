@@ -26,8 +26,13 @@ export function SummaryCard({ courseName, date, card, playerName }: CardProps) {
       <CardHeader courseName={courseName} date={date} />
 
       <View style={styles.middle}>
-        <Text style={styles.total}>{card.totalStrokes}</Text>
-        <Text style={styles.toPar}>{formatToPar(card.toPar)}</Text>
+        {/* Nothing in an exported card may reflow onto a second line. */}
+        <Text style={styles.total} numberOfLines={1}>
+          {card.totalStrokes}
+        </Text>
+        <Text style={styles.toPar} numberOfLines={1}>
+          {formatToPar(card.toPar)}
+        </Text>
         <Text style={styles.player} numberOfLines={1}>
           {playerName} · {card.holesScored} holes
         </Text>
@@ -37,8 +42,12 @@ export function SummaryCard({ courseName, date, card, playerName }: CardProps) {
         <View style={styles.breakdown}>
           {present.map((s) => (
             <View key={s.key} style={styles.stat}>
-              <Text style={styles.statValue}>{counts[s.key]}</Text>
-              <Text style={styles.statLabel}>{s.label}</Text>
+              <Text style={styles.statValue} numberOfLines={1}>
+                {counts[s.key]}
+              </Text>
+              <Text style={styles.statLabel} numberOfLines={1}>
+                {s.label}
+              </Text>
             </View>
           ))}
         </View>
