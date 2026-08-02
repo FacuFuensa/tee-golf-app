@@ -565,6 +565,7 @@ export default function CoursesScreen() {
         visible={showJoin}
         loading={joinGame.isPending}
         error={joinError}
+        coords={coords}
         onJoin={(code) => joinGame.mutate(code)}
         onClose={() => setShowJoin(false)}
       />
