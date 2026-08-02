@@ -544,6 +544,345 @@ async function makeRound({ multiplayer }) {
   );
 }
 
+console.log("\nNearby round discovery & join (migration 0014):");
+
+/**
+ * Everything below builds ONE throwaway course — with no coordinates of its
+ * own, only pinned greens, exactly the Miramont scenario the migration's
+ * fallback exists for — plus several probe rounds on it (one per way a round
+ * can be ineligible) and a second real player, then tears all of it down.
+ *
+ * Cleanup relies on `rounds.course_id references courses(id) on delete
+ * cascade` (0001) — and holes, round_players and scores all cascade the same
+ * way off rounds/courses — so deleting the one probe course at the end
+ * removes it, every probe round, every seat, and every score in one
+ * statement, regardless of which rounds got joined along the way. Postgres
+ * enforces foreign-key cascades ahead of row-level security, so this works
+ * even though round_players' own RLS would not otherwise let the course
+ * owner delete another golfer's seat directly.
+ */
+{
+  const NEARBY_MARKER = `verify-backend-nearby-${Date.now()}`;
+  const IN_RADIUS_METERS = 5000; // 5 km — comfortably covers the ~100 m test green cluster below
+  const FAR_LAT_OFFSET = 2.0; // ~222 km north — nowhere near any reasonable radius
+  // Three greens a few hundred meters apart so their centroid is well-defined
+  // and worth telling apart from "far away" at a 5 km test radius.
+  const TEST_GREENS = [
+    { number: 1, lat: 10.0000, lng: 20.0000 },
+    { number: 2, lat: 10.0009, lng: 20.0004 },
+    { number: 3, lat: 10.0002, lng: 20.0011 },
+  ];
+  const CENTROID_LAT = TEST_GREENS.reduce((s, g) => s + g.lat, 0) / TEST_GREENS.length;
+  const CENTROID_LNG = TEST_GREENS.reduce((s, g) => s + g.lng, 0) / TEST_GREENS.length;
+
+  let nearbyCourseId = null;
+  let nearbyGuest = null;
+
+  try {
+    const { data: courseRow, error: courseErr } = await supabase
+      .from("courses")
+      .insert({ name: `Nearby Test Course ${NEARBY_MARKER}`, source: "user", created_by: uid })
+      .select()
+      .single();
+    if (courseErr) throw new Error(`could not create probe course: ${courseErr.message}`);
+    nearbyCourseId = courseRow.id;
+    check(
+      "probe course has no coordinates of its own (sets up the green-centroid fallback)",
+      courseRow.latitude == null && courseRow.longitude == null
+    );
+
+    const { error: holesErr } = await supabase.from("holes").insert(
+      TEST_GREENS.map((g) => ({
+        course_id: nearbyCourseId,
+        number: g.number,
+        par: 4,
+        green_lat: g.lat,
+        green_lng: g.lng,
+      }))
+    );
+    if (holesErr) throw new Error(`could not pin probe greens: ${holesErr.message}`);
+
+    // Builds one probe round on the shared probe course, owned by the demo
+    // account, with the owner seated (mirrors createMultiplayerRound in
+    // services/db.ts). Every knob defaults to "should be discoverable" so
+    // each call only has to say what makes THIS round different.
+    async function makeProbeRound({ discoverable = true, finished = false, startedHoursAgo = 0 } = {}) {
+      const roundId = crypto.randomUUID();
+      const payload = {
+        id: roundId,
+        course_id: nearbyCourseId,
+        owner_id: uid,
+        format: "stroke",
+        is_multiplayer: true,
+        join_code: null,
+        started_at: new Date(Date.now() - startedHoursAgo * 3600 * 1000).toISOString(),
+      };
+      if (finished) payload.finished_at = new Date().toISOString();
+      if (!discoverable) payload.is_discoverable = false;
+      const { error } = await supabase.from("rounds").insert(payload);
+      if (error) return { roundId, error };
+      const { error: seatErr } = await supabase
+        .from("round_players")
+        .insert({ round_id: roundId, profile_id: uid });
+      return { roundId, error: seatErr };
+    }
+
+    const good = await makeProbeRound();
+    check("could create an open, discoverable, fresh probe round", good.error == null, good.error?.message);
+    const good2 = await makeProbeRound(); // kept separate so the "join from outside the radius" case below is isolated
+    const stale = await makeProbeRound({ startedHoursAgo: 8 }); // past the 6h freshness window
+    const hidden = await makeProbeRound({ discoverable: false });
+    const finishedRound = await makeProbeRound({ finished: true });
+
+    // A second real player, same signUp/cleanup machinery the group-round
+    // tests above use.
+    nearbyGuest = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const guestEmail = `tee-nearby-probe-${Date.now()}@example.com`;
+    const signUp = await nearbyGuest.auth.signUp({ email: guestEmail, password: "TeeProbe!2026y" });
+
+    if (!signUp.data.session) {
+      check("could create a second player for nearby-round tests", false, signUp.error?.message ?? "no session returned");
+    } else {
+      const guestId = signUp.data.user.id;
+      await nearbyGuest.from("profiles").upsert({ id: guestId, display_name: "Nearby Probe" });
+
+      // --- Discovery ---
+      const { data: seenByGuest, error: discErr } = await nearbyGuest.rpc("nearby_open_rounds", {
+        p_lat: CENTROID_LAT,
+        p_lng: CENTROID_LNG,
+        p_radius_meters: IN_RADIUS_METERS,
+      });
+      const seenIds = (seenByGuest ?? []).map((r) => r.round_id);
+      check(
+        "a round at a course within the radius is discovered by a second player (via the green-centroid fallback, since the probe course has no coordinates of its own)",
+        discErr == null && seenIds.includes(good.roundId),
+        discErr ? `raised: ${discErr.message}` : `found: ${seenIds.includes(good.roundId)}`
+      );
+      check(
+        "discovery returns no coordinates of any kind",
+        (seenByGuest ?? []).every((r) => !("latitude" in r || "longitude" in r || "lat" in r || "lng" in r))
+      );
+      check(
+        "discovery returns no owner/created_by identifiers, only the host's display name",
+        (seenByGuest ?? []).every((r) => !("owner_id" in r || "created_by" in r) && "host_display_name" in r)
+      );
+      check("a finished round is not discovered", !seenIds.includes(finishedRound.roundId));
+      check("a round with the switch off is not discovered", !seenIds.includes(hidden.roundId));
+      check("a stale (>6h old) unfinished round is not discovered", !seenIds.includes(stale.roundId));
+
+      const { data: seenByHost } = await supabase.rpc("nearby_open_rounds", {
+        p_lat: CENTROID_LAT,
+        p_lng: CENTROID_LNG,
+        p_radius_meters: IN_RADIUS_METERS,
+      });
+      check(
+        "the host does not see their own open round",
+        !(seenByHost ?? []).map((r) => r.round_id).includes(good.roundId)
+      );
+
+      const { data: seenFromFar, error: farErr } = await nearbyGuest.rpc("nearby_open_rounds", {
+        p_lat: CENTROID_LAT + FAR_LAT_OFFSET,
+        p_lng: CENTROID_LNG,
+        p_radius_meters: IN_RADIUS_METERS,
+      });
+      check(
+        "a round outside the radius is not discovered",
+        farErr == null && !(seenFromFar ?? []).map((r) => r.round_id).includes(good.roundId),
+        farErr ? `raised: ${farErr.message}` : `found: ${(seenFromFar ?? []).map((r) => r.round_id).includes(good.roundId)}`
+      );
+
+      // --- Joining ---
+      const { data: joinData, error: joinErr } = await nearbyGuest.rpc("join_nearby_round", {
+        p_round_id: good.roundId,
+        p_lat: CENTROID_LAT,
+        p_lng: CENTROID_LNG,
+        p_radius_meters: IN_RADIUS_METERS,
+      });
+      const joinRow = Array.isArray(joinData) ? joinData[0] : joinData;
+      check(
+        "joining seats the player, and returns join_round_by_code's round_id/course_id shape",
+        joinErr == null && joinRow?.status === "joined" && joinRow?.round_id === good.roundId && joinRow?.course_id === nearbyCourseId,
+        joinErr ? `raised: ${joinErr.message}` : `status=${joinRow?.status}`
+      );
+
+      const { count: seatCount } = await nearbyGuest
+        .from("round_players")
+        .select("id", { count: "exact", head: true })
+        .eq("round_id", good.roundId)
+        .eq("profile_id", guestId);
+      check("the guest is actually seated in round_players", seatCount === 1, `${seatCount} row(s)`);
+
+      const { data: rejoinData, error: rejoinErr } = await nearbyGuest.rpc("join_nearby_round", {
+        p_round_id: good.roundId,
+        p_lat: CENTROID_LAT,
+        p_lng: CENTROID_LNG,
+        p_radius_meters: IN_RADIUS_METERS,
+      });
+      const rejoinRow = Array.isArray(rejoinData) ? rejoinData[0] : rejoinData;
+      check(
+        "joining the same round twice is idempotent",
+        rejoinErr == null && rejoinRow?.status === "joined",
+        rejoinErr?.message ?? `status=${rejoinRow?.status}`
+      );
+      const { count: seatCountAfter } = await nearbyGuest
+        .from("round_players")
+        .select("id", { count: "exact", head: true })
+        .eq("round_id", good.roundId)
+        .eq("profile_id", guestId);
+      check("rejoining does not create a duplicate seat", seatCountAfter === 1, `${seatCountAfter} row(s)`);
+
+      const { data: seenAfterJoin } = await nearbyGuest.rpc("nearby_open_rounds", {
+        p_lat: CENTROID_LAT,
+        p_lng: CENTROID_LNG,
+        p_radius_meters: IN_RADIUS_METERS,
+      });
+      check(
+        "a player already seated does not see the round again",
+        !(seenAfterJoin ?? []).map((r) => r.round_id).includes(good.roundId)
+      );
+
+      // Refused: the switch is off. Must be distinguishable from success, not
+      // a silent zero-row no-op — this codebase has shipped three bugs shaped
+      // exactly like that.
+      const { data: hiddenJoin, error: hiddenJoinErr } = await nearbyGuest.rpc("join_nearby_round", {
+        p_round_id: hidden.roundId,
+        p_lat: CENTROID_LAT,
+        p_lng: CENTROID_LNG,
+        p_radius_meters: IN_RADIUS_METERS,
+      });
+      const hiddenRow = Array.isArray(hiddenJoin) ? hiddenJoin[0] : hiddenJoin;
+      check(
+        "joining a round that is not discoverable is refused, distinguishably from success",
+        hiddenJoinErr == null && hiddenRow?.status === "unavailable",
+        hiddenJoinErr ? `raised: ${hiddenJoinErr.message}` : `status=${hiddenRow?.status}`
+      );
+      const { count: hiddenSeat } = await nearbyGuest
+        .from("round_players")
+        .select("id", { count: "exact", head: true })
+        .eq("round_id", hidden.roundId)
+        .eq("profile_id", guestId);
+      check("the refused join did not seat the guest", hiddenSeat === 0, `${hiddenSeat} row(s)`);
+
+      // Refused: an otherwise-valid round, but the caller's claimed position
+      // is outside the radius.
+      const { data: farJoin, error: farJoinErr } = await nearbyGuest.rpc("join_nearby_round", {
+        p_round_id: good2.roundId,
+        p_lat: CENTROID_LAT + FAR_LAT_OFFSET,
+        p_lng: CENTROID_LNG,
+        p_radius_meters: IN_RADIUS_METERS,
+      });
+      const farRow = Array.isArray(farJoin) ? farJoin[0] : farJoin;
+      check(
+        "joining a round from outside the radius is refused, not silently accepted",
+        farJoinErr == null && farRow?.status === "unavailable",
+        farJoinErr ? `raised: ${farJoinErr.message}` : `status=${farRow?.status}`
+      );
+      const { count: farSeat } = await nearbyGuest
+        .from("round_players")
+        .select("id", { count: "exact", head: true })
+        .eq("round_id", good2.roundId)
+        .eq("profile_id", guestId);
+      check("the out-of-radius join did not seat the guest", farSeat === 0, `${farSeat} row(s)`);
+
+      // Same round, correct coordinates this time — proves the refusal above
+      // was really about distance, not some other defect masquerading as one.
+      const { data: good2Join, error: good2JoinErr } = await nearbyGuest.rpc("join_nearby_round", {
+        p_round_id: good2.roundId,
+        p_lat: CENTROID_LAT,
+        p_lng: CENTROID_LNG,
+        p_radius_meters: IN_RADIUS_METERS,
+      });
+      const good2Row = Array.isArray(good2Join) ? good2Join[0] : good2Join;
+      check(
+        "the same round is joinable once the caller is actually in range",
+        good2JoinErr == null && good2Row?.status === "joined",
+        good2JoinErr?.message ?? `status=${good2Row?.status}`
+      );
+
+      // An attacker calling join directly with a guessed round id cannot use
+      // it to seat themselves in their own round, either.
+      const { data: ownerJoin } = await supabase.rpc("join_nearby_round", {
+        p_round_id: good.roundId,
+        p_lat: CENTROID_LAT,
+        p_lng: CENTROID_LNG,
+        p_radius_meters: IN_RADIUS_METERS,
+      });
+      const ownerRow = Array.isArray(ownerJoin) ? ownerJoin[0] : ownerJoin;
+      check(
+        "the host cannot join their own round through this path",
+        ownerRow?.status === "unavailable",
+        `status=${ownerRow?.status}`
+      );
+    }
+  } catch (e) {
+    check("nearby-round discovery/join probe completed without throwing", false, e.message);
+  } finally {
+    // Cascades away every probe round, seat and score created above — see
+    // this block's opening comment.
+    if (nearbyCourseId) {
+      try {
+        await supabase.from("courses").delete().eq("id", nearbyCourseId);
+      } catch {
+        // best-effort cleanup
+      }
+    }
+    if (nearbyGuest) {
+      try {
+        await nearbyGuest.rpc("delete_my_account");
+      } catch {
+        // best-effort cleanup
+      }
+      try {
+        await nearbyGuest.auth.signOut();
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  }
+}
+
+// Anonymous callers are rejected by both new functions.
+{
+  const anon = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  const { error: discErr } = await anon.rpc("nearby_open_rounds", {
+    p_lat: 0,
+    p_lng: 0,
+    p_radius_meters: 1000,
+  });
+  const discMissing = discErr != null && /could not find|does not exist|schema cache/i.test(discErr.message);
+  check(
+    "anonymous callers are rejected by nearby_open_rounds",
+    discErr != null && !discMissing,
+    discErr == null
+      ? "it succeeded"
+      : discMissing
+        ? "function not found — migration not applied yet, this check is not meaningful"
+        : discErr.message.slice(0, 70)
+  );
+
+  const { error: joinErr } = await anon.rpc("join_nearby_round", {
+    p_round_id: crypto.randomUUID(),
+    p_lat: 0,
+    p_lng: 0,
+    p_radius_meters: 1000,
+  });
+  const joinMissing = joinErr != null && /could not find|does not exist|schema cache/i.test(joinErr.message);
+  check(
+    "anonymous callers are rejected by join_nearby_round",
+    joinErr != null && !joinMissing,
+    joinErr == null
+      ? "it succeeded"
+      : joinMissing
+        ? "function not found — migration not applied yet, this check is not meaningful"
+        : joinErr.message.slice(0, 70)
+  );
+}
+
 await supabase.auth.signOut();
 console.log(`\n${failures === 0 ? "All checks passed." : failures + " check(s) failed."}`);
 process.exit(failures > 0 ? 1 : 0);
