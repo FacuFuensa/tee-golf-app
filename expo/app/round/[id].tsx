@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import { Briefcase, ChevronLeft, ChevronRight, Crosshair, Flag, LocateFixed, MapPin, Share2, Sparkles, Thermometer, Trophy, Users, Wind, X } from "lucide-react-native";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -27,6 +27,7 @@ import { Colors, Fonts, Radius, Spacing, Typography, hairline } from "@/constant
 import { useClubs } from "@/hooks/useClubs";
 import { useLiveLocation } from "@/hooks/useLiveLocation";
 import { usePressScale } from "@/hooks/usePressScale";
+import { useWatchRound } from "@/hooks/useWatchRound";
 import { useActiveRound } from "@/providers/ActiveRoundProvider";
 import { useAuth } from "@/providers/AuthProvider";
 import { useBlockedPlayers } from "@/providers/BlockedPlayersProvider";
@@ -484,6 +485,60 @@ export default function PlayRoundScreen() {
     pop.setValue(0.96);
     Animated.spring(pop, { toValue: 1, speed: 14, bounciness: 6, useNativeDriver: true }).start();
   }, [holeIndex, pop]);
+
+  // ---- Apple Watch -------------------------------------------------------
+  //
+  // All of this has to sit above the early returns below: they run before the
+  // round has loaded, and a hook after a conditional return is a React error.
+  // `useWatchRound` no-ops entirely when there is no paired watch, so the cost
+  // on every other device is one boolean check.
+
+  // `scores` as a ref, purely so the watch handler can read the current value
+  // without being rebuilt (and re-subscribed) on every stroke.
+  const scoresRef = useRef(scores);
+  scoresRef.current = scores;
+
+  const applyWatchStrokes = useCallback(
+    (watchHoleId: string, next: number): void => {
+      // A queued WatchConnectivity transfer survives app launches, so a message
+      // can name a hole that isn't in the round now on screen.
+      if (!holes.some((h) => h.id === watchHoleId)) return;
+      // The same edit is delivered twice by design (live + queued). Applying an
+      // absolute count makes that harmless; bailing when it changes nothing
+      // additionally keeps it from firing a second identical Supabase write.
+      if ((scoresRef.current[watchHoleId] ?? 0) === next) return;
+
+      setScores((prev) => ({ ...prev, [watchHoleId]: next }));
+      setDirty(true);
+      if (isMultiplayer) {
+        saveScore.mutate({ holeId: watchHoleId, strokes: next });
+      }
+    },
+    [holes, isMultiplayer, saveScore]
+  );
+
+  useWatchRound({
+    enabled: !!bundle && holes.length > 0,
+    roundId,
+    courseName: bundle?.course.name ?? "",
+    holeId: currentHole?.id ?? null,
+    holeNumber: currentHole?.number ?? null,
+    par: currentHole?.par ?? null,
+    strokes: currentHole ? scores[currentHole.id] ?? 0 : 0,
+    // Rounded here rather than on the watch so both screens are formatting the
+    // same number the same way — this is exactly what `formatDistance` does for
+    // the hero above.
+    distance:
+      distanceMeters != null && !offCourse
+        ? Math.round(metersToUnit(distanceMeters, unit))
+        : null,
+    unit: unit === "yards" ? "yd" : "m",
+    // Mirrors the hero's own three states (see `DistanceHero` below), so a
+    // glance at the wrist and a glance at the phone never disagree.
+    status: distanceMeters == null ? "searching" : offCourse ? "offcourse" : "ok",
+    holeCount: holes.length,
+    onSetStrokes: applyWatchStrokes,
+  });
 
   if (bundleQuery.isLoading) {
     return (

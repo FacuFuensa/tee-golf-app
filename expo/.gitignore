@@ -10,8 +10,18 @@ web-build/
 expo-env.d.ts
 
 # Native
-ios/
-android/
+#
+# Anchored with a leading slash so these match ONLY the generated top-level
+# projects, not any directory called ios/ or android/ deeper in the tree.
+#
+# Unanchored, `ios/` also matches `modules/tee-watch-bridge/ios/` — the hand-
+# written Swift and podspec for the local Expo module. That failure is silent
+# and total: the module's expo-module.config.json is committed (it isn't inside
+# an ios/ folder), so autolinking on the build runner finds the module, declares
+# the pod, and then finds no source to compile. `npx expo-doctor` is what
+# catches this, and it is the only thing that does.
+/ios/
+/android/
 *.orig.*
 *.jks
 *.p8

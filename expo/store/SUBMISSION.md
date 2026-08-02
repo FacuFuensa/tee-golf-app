@@ -704,8 +704,13 @@ attaches the file there.
 
 ### Version bump
 
-`version` is `1.1.0`. Leave `buildNumber` alone — `cli.appVersionSource` is `remote`, so EAS owns
+`version` is `1.3.0`. Leave `buildNumber` alone — `cli.appVersionSource` is `remote`, so EAS owns
 it and increments per build.
+
+The train so far: `1.1.0` was the round-history / scorecard / nearby-join work, `1.2.0` added the
+Apple Watch target, `1.3.0` made that watch actually show the round and record strokes. Each bump
+was forced by the rule in §11 — every one of them changed the compiled binary, so none could have
+gone out over the air.
 
 Bumping while 1.0.0 sits in review is safe, and the distinction is worth keeping straight: what
 must not be touched is the **1.0.0 version record** in App Store Connect and the binary already
