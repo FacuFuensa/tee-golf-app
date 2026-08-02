@@ -748,29 +748,39 @@ Anything that changes the compiled binary itself:
 - **`app.json`'s `version`** — bumping it is part of the App Store release process in §10, not an
   OTA concern, and doesn't do anything by itself either way
 
-If a change touches only the first list, `runtimeVersion.policy: "fingerprint"` (below) still
-computes the same fingerprint before and after, and the update reaches every installed binary with
-a matching native layer. If it touches the second list, the fingerprint changes, and any binary
-built before that change simply never sees the update — it keeps running its last-known-good JS
-until a new native build replaces it. That's not a bug to work around; it's the entire point of
-pinning the policy to a hash of the native surface instead of to the version string.
+If a change touches only the first list, it can go out over the air. If it touches the second, it
+cannot — it needs a build, and the version must be bumped so the new JavaScript never reaches the
+old binary.
 
-### `runtimeVersion`: why `"fingerprint"` and not `"appVersion"`
+### `runtimeVersion`: `"appVersion"`, and the discipline it costs
 
 ```json
-"runtimeVersion": { "policy": "fingerprint" }
+"runtimeVersion": { "policy": "appVersion" }
 ```
 
-`fingerprint` hashes the native layer — native modules, config plugins, permissions, Info.plist
-keys, the watch target, everything an `expo prebuild` would regenerate — into the runtime version
-string. An update is only ever offered to a running binary whose native surface actually matches
-the update's.
+The runtime version is `app.json`'s `version`. An update published while the app is `1.2.0` is
+offered only to builds that were themselves `1.2.0`.
 
-The alternative (`appVersion`) keys the runtime version on `app.json`'s `version` field instead. It
-has no way to notice that an older binary is missing a native module the new JavaScript calls into —
-that isn't caught by anything, it just crashes on launch, for every installed copy that takes the
-update, with no App Store review in between to catch it first. `fingerprint` is the policy that
-makes that specific failure mode structurally impossible rather than merely unlikely.
+**`fingerprint` was tried first and had to be abandoned.** It is the better policy in principle —
+it hashes the native layer, so an update can only ever reach a binary whose native surface actually
+matches, making "the JS calls a native module this binary doesn't have" structurally impossible.
+But it breaks `eas build --local`, which is how this project builds (see
+`.github/workflows/ios-eas-local.yml`):
+
+```
+Error: Runtime version calculated on local machine not equal to
+       runtime version calculated during build.
+```
+
+The likely cause is ours, not Expo's: `targets/watch/expo-target.config.js` reads
+`EAS_BUILD_IOS_BUILD_NUMBER`, an environment variable that exists *inside* the build and not before
+it, so the config resolves differently at the two moments the fingerprint is computed. Worth
+revisiting — if that hook can be made fingerprint-stable, `fingerprint` is the policy to be on.
+
+**Until then, this is the rule that keeps it safe, and it is a human rule with nothing enforcing
+it:** if a change touches anything in the second list above, bump `version` in `app.json` in the
+same commit. Skip that and an OTA update can reach a binary without the native code it needs, and
+it will crash on launch for everyone who takes it, with no App Store review in between.
 
 Confirmed against Expo's current docs before writing this: `fingerprint` is a supported
 `runtimeVersion.policy` enum value (alongside `nativeVersion`, `sdkVersion`, `appVersion`) in the
