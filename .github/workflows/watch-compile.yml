@@ -76,6 +76,57 @@ jobs:
           echo "name=$TARGET" >> "$GITHUB_OUTPUT"
           echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
 
+      - name: Check the watch app is embedded in the iOS app, and only once
+        working-directory: expo/ios
+        run: |
+          set -euo pipefail
+          PBX="${{ steps.scheme.outputs.project }}/project.pbxproj"
+          WATCH_TARGET="${{ steps.scheme.outputs.name }}"
+
+          # These two assertions exist because neither can be checked from a
+          # Windows machine — `expo prebuild` is hard-blocked there by the Expo
+          # CLI's own platform guard, so the generated Xcode project is only
+          # ever visible from a macOS runner or a full EAS build.
+          #
+          # 1. A watch app ships INSIDE the iOS app bundle. Without an embed
+          #    phase the build still succeeds and the .ipa simply has no watch
+          #    app in it — App Store Connect accepts it and the watch never
+          #    appears in TestFlight, with nothing anywhere saying why.
+          if ! grep -q "Embed Watch Content" "$PBX"; then
+            echo "FAIL: no 'Embed Watch Content' build phase in $PBX"
+            echo "The watch app would not ship inside the iOS app."
+            exit 1
+          fi
+          echo "OK: 'Embed Watch Content' phase present"
+
+          # 2. @bacons/apple-targets < 4.0.6 made the watch target embed
+          #    ITSELF, which recurses. Fixed upstream in Feb 2026, but this
+          #    project pins the plugin, and a future bump could regress it.
+          WATCH_UUID=$(node -e '
+            const fs = require("fs");
+            const pbx = fs.readFileSync(process.argv[1], "utf8");
+            const name = process.argv[2];
+            const re = new RegExp("([0-9A-F]{24}) /\\\\* " + name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&") + " \\\\*/ = \\\\{\\\\s*isa = PBXNativeTarget", "m");
+            const m = pbx.match(re);
+            console.log(m ? m[1] : "");
+          ' "$PBX" "$WATCH_TARGET")
+
+          if [ -z "$WATCH_UUID" ]; then
+            echo "WARN: could not resolve the watch target's UUID; skipping the self-embed check"
+          else
+            SELF=$(awk -v uuid="$WATCH_UUID" '
+              $0 ~ uuid" /\\* "  { inTarget = 1 }
+              inTarget && /Embed Watch Content/ { found = 1 }
+              inTarget && /^\t\t\};/ { inTarget = 0 }
+              END { print found + 0 }
+            ' "$PBX")
+            if [ "$SELF" = "1" ]; then
+              echo "FAIL: the watch target embeds itself — the 4.0.6 recursion bug is back"
+              exit 1
+            fi
+            echo "OK: the watch target does not embed itself"
+          fi
+
       - name: Build the watch target (unsigned)
         working-directory: expo/ios
         run: |
