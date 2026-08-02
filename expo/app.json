@@ -8,11 +8,6 @@
     "scheme": "tee",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/images/icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#F2EDE3"
-    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.teegolf.app",
@@ -107,6 +102,15 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "Tee uses your location to show live GPS distance to the green of the hole you're playing, and to sort your course list so the course you're standing on is first."
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-mark.png",
+          "imageWidth": 51,
+          "resizeMode": "contain",
+          "backgroundColor": "#F2EDE3"
         }
       ]
     ],
