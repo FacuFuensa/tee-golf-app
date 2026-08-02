@@ -54,9 +54,20 @@ module.exports = (config) => {
   return {
     type: "watch",
 
-    // Shown as the product/scheme name in Xcode. Not user-facing.
-    name: "Tee Watch",
-    // CFBundleDisplayName — what shows under the icon on the watch face.
+    // The Xcode target/product name. NOT user-facing — `displayName` below is
+    // what a golfer sees.
+    //
+    // It must contain NO SPACES, and that is not cosmetic. The plugin writes
+    // this name into `extra.eas.build.experimental.ios.appExtensions` with
+    // spaces stripped, while the Xcode target keeps them — so "Tee Watch"
+    // becomes `targetName: "TeeWatch"` in the manifest EAS reads, EAS then
+    // looks that up in project.pbxproj, finds "Tee Watch" instead, and the
+    // build dies at credential assignment with
+    // `Could not find target 'TeeWatch' in project.pbxproj`.
+    // Keeping the two identical is the whole fix.
+    name: "TeeWatch",
+    // CFBundleDisplayName — what shows under the icon on the watch face. This
+    // is the one that is allowed to be pretty.
     displayName: "Tee",
 
     // Leading-dot form is appended to the main app's bundle identifier by
