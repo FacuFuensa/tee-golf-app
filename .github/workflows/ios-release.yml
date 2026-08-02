@@ -437,7 +437,11 @@ jobs:
           name: tee-ios-${{ env.MARKETING_VERSION }}-${{ env.BUILD_NUMBER }}
           path: ${{ env.IPA_PATH }}
           if-no-files-found: error
-          retention-days: 7
+          # This repo is public, so anyone with the run URL can download this
+          # artifact. The .ipa carries no private key, but it is a signed
+          # release binary and its only job here is letting you recover a build
+          # whose upload failed — a day is plenty for that.
+          retention-days: 1
 
       - name: Validate against App Store Connect
         if: ${{ inputs.distribute == 'validate' }}
