@@ -365,6 +365,10 @@ export async function createSoloRound(
     is_multiplayer: false,
     started_at: startedAt,
     finished_at: null,
+    // Column default (never surfaced anywhere: nearby_open_rounds only ever
+    // looks at is_multiplayer = true rounds), kept here just so this object
+    // matches the real row shape.
+    is_discoverable: true,
   };
 }
 
@@ -378,10 +382,19 @@ function makeJoinCode(): string {
   return code;
 }
 
-/** Host a group round: generates a shareable join code and seats the host. */
+/**
+ * Host a group round: generates a shareable join code and seats the host.
+ * `discoverable` sets the round's `is_discoverable` flag from the golfer's
+ * Settings preference (default on) at the moment the round is created — the
+ * column itself defaults to true too, but that default only covers "the
+ * client didn't say"; a golfer who turned the preference off must get a
+ * private round from the first insert, not a discoverable one that's flipped
+ * off a moment later (a race a second, faster device could win).
+ */
 export async function createMultiplayerRound(
   courseId: string,
-  ownerId: string
+  ownerId: string,
+  discoverable: boolean
 ): Promise<Round> {
   const id = Crypto.randomUUID();
   const startedAt = new Date().toISOString();
@@ -395,6 +408,7 @@ export async function createMultiplayerRound(
     is_multiplayer: true,
     join_code: joinCode,
     started_at: startedAt,
+    is_discoverable: discoverable,
   });
   if (error) throw error;
 
@@ -412,7 +426,28 @@ export async function createMultiplayerRound(
     is_multiplayer: true,
     started_at: startedAt,
     finished_at: null,
+    is_discoverable: discoverable,
   };
+}
+
+/**
+ * Flip a live round's discoverability (Settings → the host's own switch, or
+ * the toggle next to the join code while hosting). Owner-only, and no RPC is
+ * needed to enforce that: `rounds_update_owner` (0001) is
+ * `using (owner_id = auth.uid()) with check (owner_id = auth.uid())`, and
+ * 0010's column-level grants only ever narrowed `holes`, never `rounds` — see
+ * migration 0014's own header comment for why a plain update is sufficient
+ * here. A non-owner's update simply matches zero rows under RLS.
+ */
+export async function setRoundDiscoverable(
+  roundId: string,
+  discoverable: boolean
+): Promise<void> {
+  const { error } = await supabase
+    .from("rounds")
+    .update({ is_discoverable: discoverable })
+    .eq("id", roundId);
+  if (error) throw error;
 }
 
 /**
@@ -434,6 +469,105 @@ export async function joinRoundByCode(
     roundId: (row as { round_id: string }).round_id,
     courseId: (row as { course_id: string }).course_id,
   };
+}
+
+/** Nearby round discovery + join (migration 0014) --------------------------- */
+
+/** One open group round at a nearby course, as returned by `nearby_open_rounds`. */
+export interface NearbyRound {
+  roundId: string;
+  courseId: string;
+  courseName: string;
+  hostDisplayName: string;
+  format: string;
+  startedAt: string;
+  distanceMeters: number;
+}
+
+interface NearbyOpenRoundRow {
+  round_id: string;
+  course_id: string;
+  course_name: string;
+  host_display_name: string;
+  format: string;
+  started_at: string;
+  distance_meters: number;
+}
+
+/**
+ * Open group rounds at courses within `radiusMeters` of (lat, lng), nearest
+ * first. Never includes the caller's own round or one they're already seated
+ * in (the RPC filters both). No coordinates of any kind come back — see
+ * migration 0014's own comment on why the return shape is deliberately thin.
+ */
+export async function fetchNearbyOpenRounds(
+  lat: number,
+  lng: number,
+  radiusMeters: number
+): Promise<NearbyRound[]> {
+  const { data, error } = await supabase.rpc("nearby_open_rounds", {
+    p_lat: lat,
+    p_lng: lng,
+    p_radius_meters: radiusMeters,
+  });
+  if (error) throw error;
+  const rows = (data as NearbyOpenRoundRow[] | null) ?? [];
+  return rows.map((row) => ({
+    roundId: row.round_id,
+    courseId: row.course_id,
+    courseName: row.course_name,
+    hostDisplayName: row.host_display_name,
+    format: row.format,
+    startedAt: row.started_at,
+    distanceMeters: row.distance_meters,
+  }));
+}
+
+export type JoinNearbyRoundStatus = "joined" | "unavailable";
+
+export interface JoinNearbyRoundResult {
+  roundId: string;
+  courseId: string | null;
+  status: JoinNearbyRoundStatus;
+}
+
+interface JoinNearbyRoundRow {
+  round_id: string;
+  course_id: string | null;
+  status: JoinNearbyRoundStatus;
+}
+
+/**
+ * Join a round surfaced by `fetchNearbyOpenRounds`. Unlike `joinRoundByCode`,
+ * this never returns null and never throws for "the round moved on" — the
+ * RPC's contract (see migration 0014) is that it ALWAYS returns exactly one
+ * row, with `status` either 'joined' or 'unavailable'. That is deliberate:
+ * this codebase has shipped three bugs where a write touched zero rows,
+ * raised nothing, and the app reported success anyway (see `finishRound`'s
+ * and `deleteMyRound`'s own doc comments). Callers MUST branch on `status`
+ * and must never treat a resolved promise alone as "joined".
+ */
+export async function joinNearbyRound(
+  roundId: string,
+  lat: number,
+  lng: number,
+  radiusMeters: number
+): Promise<JoinNearbyRoundResult> {
+  const { data, error } = await supabase.rpc("join_nearby_round", {
+    p_round_id: roundId,
+    p_lat: lat,
+    p_lng: lng,
+    p_radius_meters: radiusMeters,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  // The RPC's contract guarantees a row; this is defensive only (a network
+  // layer or Postgres client bug returning nothing regardless), and mapped to
+  // 'unavailable' rather than throwing so a caller's status switch stays the
+  // one place that decides what the golfer sees.
+  if (!row) return { roundId, courseId: null, status: "unavailable" };
+  const typed = row as JoinNearbyRoundRow;
+  return { roundId: typed.round_id, courseId: typed.course_id, status: typed.status };
 }
 
 export interface RoundBundle {

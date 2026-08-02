@@ -12,6 +12,7 @@ import {
   ScrollView,
   Share,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from "react-native";
@@ -37,9 +38,10 @@ import {
   finishRound,
   NotRoundOwnerError,
   setHoleGreen,
+  setRoundDiscoverable,
   upsertScore,
 } from "@/services/db";
-import type { LeaderboardEntry } from "@/services/db";
+import type { LeaderboardEntry, RoundBundle } from "@/services/db";
 import { fetchWeather } from "@/services/weather";
 import type { Weather } from "@/services/weather";
 import { isWeatherConfigured } from "@/services/weatherConfig";
@@ -255,6 +257,33 @@ export default function PlayRoundScreen() {
     },
     onError: () => {
       Alert.alert("Couldn't save the green", "Please try again in a moment.");
+    },
+  });
+
+  // The host's own "let nearby players join" switch for THIS round (Settings
+  // has the default-for-next-time version; this is the live one). Optimistic
+  // because it's a single boolean flip on a switch the golfer is looking
+  // directly at — waiting for a round trip before it visibly moves would read
+  // as broken. rounds_update_owner (0001) already limits who this can even
+  // affect; see setRoundDiscoverable's own doc comment.
+  const setDiscoverable = useMutation({
+    mutationFn: (next: boolean) => setRoundDiscoverable(roundId, next),
+    onMutate: async (next: boolean) => {
+      await queryClient.cancelQueries({ queryKey: ["round", roundId] });
+      const previous = queryClient.getQueryData<RoundBundle>(["round", roundId]);
+      if (previous) {
+        queryClient.setQueryData<RoundBundle>(["round", roundId], {
+          ...previous,
+          round: { ...previous.round, is_discoverable: next },
+        });
+      }
+      return { previous };
+    },
+    onError: (_error, _next, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["round", roundId], context.previous);
+      }
+      Alert.alert("Couldn't update", "Please try again in a moment.");
     },
   });
 
@@ -777,6 +806,10 @@ export default function PlayRoundScreen() {
           players={players}
           currentUserId={user?.id ?? null}
           loading={leaderboardQuery.isLoading}
+          isOwner={isOwner}
+          discoverable={bundle.round.is_discoverable}
+          onToggleDiscoverable={(next) => setDiscoverable.mutate(next)}
+          discoverablePending={setDiscoverable.isPending}
           onBlock={(profileId, name) => {
             blockPlayer(profileId);
             notifySuccess();
@@ -907,6 +940,10 @@ function LeaderboardModal({
   players,
   currentUserId,
   loading,
+  isOwner,
+  discoverable,
+  onToggleDiscoverable,
+  discoverablePending,
   onBlock,
   onClose,
 }: {
@@ -917,6 +954,11 @@ function LeaderboardModal({
   players: LeaderboardEntry[];
   currentUserId: string | null;
   loading: boolean;
+  /** Only the host sees the discoverability switch below. */
+  isOwner: boolean;
+  discoverable: boolean;
+  onToggleDiscoverable: (next: boolean) => void;
+  discoverablePending: boolean;
   onBlock: (profileId: string, name: string) => void;
   onClose: () => void;
 }) {
@@ -989,6 +1031,28 @@ function LeaderboardModal({
               <Text style={styles.shareButtonText}>Share</Text>
             </View>
           </Pressable>
+        ) : null}
+
+        {/* Host-only: the live version of the Settings default. Same copy
+            intent as Settings, scoped to "this round" instead of "next time
+            I host". */}
+        {isOwner ? (
+          <View style={styles.discoverableRow}>
+            <View style={styles.discoverableText}>
+              <Text style={styles.discoverableTitle}>Nearby players can join</Text>
+              <Text style={styles.discoverableSub}>
+                Golfers at this course see your name and can join without the code.
+              </Text>
+            </View>
+            <Switch
+              value={discoverable}
+              onValueChange={onToggleDiscoverable}
+              disabled={discoverablePending}
+              trackColor={{ false: Colors.border, true: Colors.accent }}
+              thumbColor="#FFFFFF"
+              ios_backgroundColor={Colors.border}
+            />
+          </View>
         ) : null}
 
         {loading && players.length === 0 ? (
@@ -2221,6 +2285,18 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
   },
   shareButtonText: { ...Typography.callout, color: Colors.onPrimary, fontWeight: "700" },
+  discoverableRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: Spacing.md,
+    marginTop: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+  },
+  discoverableText: { flex: 1, gap: 2 },
+  discoverableTitle: { ...Typography.subhead, color: Colors.textPrimary, fontWeight: "600" },
+  discoverableSub: { ...Typography.caption, color: Colors.textTertiary, fontWeight: "400", lineHeight: 16 },
   boardLoading: { paddingVertical: Spacing.xl, alignItems: "center" },
   boardList: { gap: Spacing.sm },
   boardRow: {

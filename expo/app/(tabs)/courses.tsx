@@ -18,6 +18,7 @@ import { Swipeable } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { JoinGameSheet, StartRoundSheet } from "@/components/GroupRoundSheets";
+import { NearbyRoundPrompt } from "@/components/NearbyRoundPrompt";
 import { TeeMark } from "@/components/TeeMark";
 import { Wordmark } from "@/components/Wordmark";
 import { TeeButton } from "@/components/ui/TeeButton";
@@ -102,7 +103,7 @@ export default function CoursesScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, isConfigured } = useAuth();
-  const { unit } = useSettings();
+  const { unit, discoverableRounds } = useSettings();
   const { activeRound, clearActiveRound } = useActiveRound();
   const queryClient = useQueryClient();
   const [startCourse, setStartCourse] = useState<Course | null>(null);
@@ -134,7 +135,7 @@ export default function CoursesScreen() {
   const startHost = useMutation({
     mutationFn: (courseId: string) => {
       if (!user) throw new Error("Not signed in");
-      return createMultiplayerRound(courseId, user.id);
+      return createMultiplayerRound(courseId, user.id, discoverableRounds);
     },
     onSuccess: (round) => {
       setStartCourse(null);
@@ -566,6 +567,20 @@ export default function CoursesScreen() {
         error={joinError}
         onJoin={(code) => joinGame.mutate(code)}
         onClose={() => setShowJoin(false)}
+      />
+      <NearbyRoundPrompt
+        coords={coords}
+        // Suppressed while any other sheet on this screen is already up (two
+        // TeeModals stacked would double the scrim) and while a round is
+        // already in progress — offering a different round to join mid-round
+        // is confusing, and blockIfActive is what already owns that prompt.
+        enabled={
+          isConfigured &&
+          !!user &&
+          !activeRound &&
+          startCourse === null &&
+          !showJoin
+        }
       />
     </View>
   );

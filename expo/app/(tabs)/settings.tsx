@@ -1,9 +1,9 @@
 import Constants from "expo-constants";
 import { useRouter } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
-import { Briefcase, ChevronRight, LifeBuoy, Lock, LogOut, Mail, Ruler, Trash2, User as UserIcon } from "lucide-react-native";
+import { Briefcase, ChevronRight, LifeBuoy, Lock, LogOut, Mail, Ruler, Trash2, User as UserIcon, Users } from "lucide-react-native";
 import React, { useState } from "react";
-import { Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Wordmark } from "@/components/Wordmark";
@@ -27,7 +27,7 @@ const UNIT_OPTIONS: { label: string; value: DistanceUnit }[] = [
 export default function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
-  const { unit, setUnit } = useSettings();
+  const { unit, setUnit, discoverableRounds, setDiscoverableRounds } = useSettings();
   const { profile, user, signOut, clearMyData, deleteAccount } = useAuth();
   const { blocked, unblockPlayer } = useBlockedPlayers();
   const { clubs } = useClubs();
@@ -123,6 +123,33 @@ export default function SettingsScreen() {
       <SegmentedControl options={UNIT_OPTIONS} value={unit} onChange={setUnit} />
       <Text style={styles.hint}>
         Applied everywhere — including the live distance to the green.
+      </Text>
+
+      <SectionLabel icon={<Users size={14} color={Colors.textTertiary} strokeWidth={2.4} />}>
+        Group rounds
+      </SectionLabel>
+      <TeeCard padded={false} style={styles.card}>
+        <View style={styles.toggleRow}>
+          <View style={styles.toggleText}>
+            <Text style={styles.toggleTitle}>Let nearby players join your round</Text>
+            <Text style={styles.toggleSub}>
+              When you host, golfers at the same course see your name and that your round is
+              open, and can join without the invite code. Off means only someone with your code
+              can join.
+            </Text>
+          </View>
+          <Switch
+            value={discoverableRounds}
+            onValueChange={setDiscoverableRounds}
+            trackColor={{ false: Colors.border, true: Colors.accent }}
+            thumbColor="#FFFFFF"
+            ios_backgroundColor={Colors.border}
+          />
+        </View>
+      </TeeCard>
+      <Text style={styles.hint}>
+        Applies the next time you host. A round already in progress has its own switch next to
+        the invite code.
       </Text>
 
       {blocked.length > 0 ? (
@@ -316,6 +343,16 @@ const styles = StyleSheet.create({
   },
   rowLabel: { ...Typography.body, color: Colors.textSecondary },
   rowValue: { ...Typography.callout, flexShrink: 1, textAlign: "right" },
+  toggleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: Spacing.lg,
+    gap: Spacing.lg,
+  },
+  toggleText: { flex: 1, gap: 4 },
+  toggleTitle: { ...Typography.body, fontWeight: "600" },
+  toggleSub: { ...Typography.subhead, color: Colors.textTertiary, lineHeight: 18 },
   linkRow: {
     flexDirection: "row",
     alignItems: "center",

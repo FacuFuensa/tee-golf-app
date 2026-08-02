@@ -298,9 +298,14 @@ Declare exactly this. It matches `app.json`'s privacy manifest and the published
 | Email Address | Yes | Yes | No | App Functionality |
 | Name (display name) | Yes | Yes | No | App Functionality |
 | User ID | Yes | Yes | No | App Functionality |
-| Precise Location | Yes | **No** | No | App Functionality |
+| Precise Location | Yes | **Yes** | No | App Functionality |
 | Other User Content (scores, courses, clubs) | Yes | Yes | No | App Functionality |
 | Search History (course search terms) | Yes | **No** | No | App Functionality |
+
+**Precise Location's "Linked to user" changed from No to Yes in 1.1.0** (nearby-round join, §10):
+location now reaches the backend as a parameter of an authenticated call, where before it never left
+the device. See §10, "App Privacy: the fifth feature is different," for the full reasoning — do not
+revert this row without reading that section first.
 
 **Nothing is used to track you**, so the ATT prompt is not needed and `NSUserTrackingUsageDescription`
 is deliberately absent. That is now true of the binary — see §6.
@@ -555,7 +560,7 @@ hit the "a build with this version already exists" error on a resubmission.
 
 ## 10. Version 1.1.0
 
-Four features, built on branch `feat/round-history-and-scorecard`.
+Five features, built on branch `feat/round-history-and-scorecard`.
 
 **Delete one round from history.** Swipe a row in Statistics → Round history, or hold it. Both open
 the same confirmation. In a group round where other players are still seated this removes only you
@@ -570,6 +575,13 @@ already carries the scorecard yardage. Turns green when the current round is bea
 **Shareable scorecards.** Three formats — the hole-by-hole grid, a square summary, and a group card
 — with a live preview, exported as a PNG to the OS share sheet.
 
+**Join the round you're standing on.** Open the Courses tab at a course where someone is already
+hosting a group round and, if they've left it discoverable, a prompt offers to join directly — no
+code. Every host controls this: a Settings switch (default on) sets it for every round they host
+from then on, and a live switch next to the invite code covers a round already in progress. See
+"App Privacy: the fifth feature is different" below — unlike the other four, this one does change
+what the app sends to the backend.
+
 ### Prerequisite: migration 0013
 
 `supabase/migrations/0013_delete_single_round.sql` **must be applied before submitting a build**, or
@@ -581,10 +593,30 @@ deletion has already changed, so it cannot be made atomically from the client. `
 still have no DELETE policy — the function is the only path, and it is granted to `authenticated`
 only and revoked from `anon`.
 
-### App Privacy: nothing changes
+### Prerequisite: migration 0014
 
-**No new data is collected, and no nutrition-label or privacy-manifest change is required.** Do not
-re-derive this next release — the reasoning is:
+`supabase/migrations/0014_nearby_rounds.sql` **must be applied before submitting a build** that
+includes the nearby-round prompt, or `nearby_open_rounds`/`join_nearby_round` don't exist yet. The
+failure mode is quiet, not a crash: the Courses tab's discovery query just errors, the error is
+swallowed the same way every other background query failure in this app is, and the prompt never
+appears — a reviewer only ever sees the existing code-based join path, which keeps working on its
+own regardless.
+
+Like `delete_my_round`, both new functions are `SECURITY DEFINER` — the caller isn't yet a member of
+any round `nearby_open_rounds` returns, and `join_nearby_round` has to seat them in one — and both
+are granted to `authenticated` only and revoked from `anon`. `store/verify-backend.mjs` now exercises
+the whole feature end to end (radius filtering, the freshness window, the discoverable switch,
+joining, double-joining, and every refusal case) against a disposable probe course and a real second
+account, then tears everything down. **Not yet run against the live project as part of this change**
+— it performs real writes (a probe course, probe rounds, a throwaway second account) and this change
+was made under an explicit instruction not to write to production. Run it once the migration is
+applied.
+
+### App Privacy: nothing changes — for the first four
+
+**No new data is collected, and no nutrition-label or privacy-manifest change is required** — this
+holds for delete-one-round, round detail, hole bests and shareable scorecards specifically. It does
+**not** hold for the fifth feature; see the next section. The reasoning for these four:
 
 - Every feature reads data the app already stores (rounds, scores, holes, profiles). Section 5's
   declared types already cover all of it.
@@ -596,6 +628,55 @@ re-derive this next release — the reasoning is:
 - The group card shows other players' names and scores, but only for players already in a round with
   you, and only when the golfer explicitly selects that tab. That is user-initiated sharing of data
   they already see in the app, not collection.
+
+### App Privacy: the fifth feature is different
+
+Nearby-round join is a genuinely new data flow, in exactly the way migration 0014's own header
+describes. Do not carry the "nothing changes" conclusion above over to it.
+
+**What gets sent, and when.** While a golfer is on the Courses tab with a location fix, the app
+calls `nearby_open_rounds(lat, lng, radius)` — around once a minute while the tab stays open, plus
+again the moment they try to join — sending their current device coordinates to the Supabase backend
+as parameters of an authenticated RPC call. This runs for every signed-in golfer who has the Courses
+tab open and a location fix, whether or not they are hosting anything themselves; it's how the app
+looks for someone else's open round, not something a host opts into separately.
+
+**What comes back, and who sees it.** For any open, unfinished, discoverable group round within 1 km
+of a course near the caller, the RPC returns that round's host `display_name`, the course name, the
+round format, when it started, and a computed distance. That is visible to any other signed-in
+golfer standing near the same course — not only to someone who was handed the six-character code.
+That's the actual product change: a host's name and the fact that they're currently hosting becomes
+discoverable by nearby strangers, where before it was only ever shared with whoever they told the
+code to directly.
+
+**What is not sent or kept.** No host's coordinates are ever stored or returned by either function —
+a round is anchored to its course's location, never to the host's device position (see migration
+0014, "THE PRIVACY DECISION"). The caller's own lat/lng is used only to filter courses by distance
+for that one request and is never written to any table — there is no location history being built
+here, only a live, per-request lookup that leaves nothing behind in the database.
+
+**How it's switched off.** Settings → "Let nearby players join your round" (default on, the owner's
+explicit choice) is the promise this app can actually keep: any round hosted while it's off never has
+`is_discoverable` set, so `nearby_open_rounds` never returns it to anyone and `join_nearby_round`
+refuses even a directly-guessed round id (see that function's own doc comment — "unavailable," not a
+silent success). A live switch next to the invite code covers a round already in progress. Neither
+switch stops the outgoing half of this: turning your own round non-discoverable does not stop your
+own device from sending your position to search for OTHER people's open rounds whenever you're on
+the Courses tab with a fix — that only stops if the golfer denies or revokes the app's existing
+When-In-Use location permission, the same one every other location feature here already depends on.
+**No new permission is requested for any of this.**
+
+**§5's table above is already updated to match:** the Precise Location row's `Linked to user` column
+now reads **Yes**, was **No**. The old "No" was correct because location never reached the
+backend at all — it only ever powered on-device distance math (the hero yardage, "closest to you").
+Now it does reach the backend, as a parameter of a call authenticated as the caller, even though it's
+never persisted afterward — Apple's own definition of "linked" turns on whether collected data is
+connected to a user's identity, not on whether a table stores it, and a coordinate carried on an
+authenticated RPC call satisfies that. `Used for tracking` stays No (nothing here is shared cross-app
+or used for advertising) and `Purpose` stays App Functionality — so it's one cell, not a new row —
+but it is a real change, and whoever fills in App Store Connect from this file still has to enter it
+there and re-publish the questionnaire
+(see §8b step 2: an edited-but-unpublished questionnaire still reads as incomplete).
 
 The age rating questionnaire in section 4 is unaffected. The Guideline 1.2 moderation stack in
 section 6 is untouched.
