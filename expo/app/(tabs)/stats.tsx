@@ -1,40 +1,33 @@
-import { useQuery } from "@tanstack/react-query";
-import { Award, BarChart3, Flag, Target, TrendingDown } from "lucide-react-native";
-import React, { useMemo } from "react";
-import {
-  ActivityIndicator,
-  RefreshControl,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from "react-native";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "expo-router";
+import { Award, BarChart3, Flag, Target, Trash2, TrendingDown } from "lucide-react-native";
+import React, { useMemo, useRef } from "react";
+import { ActivityIndicator, Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Swipeable } from "react-native-gesture-handler";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { TeeMark } from "@/components/TeeMark";
 import { TeeButton } from "@/components/ui/TeeButton";
 import { TeeCard } from "@/components/ui/TeeCard";
-import { Colors, Fonts, Radius, Spacing, Typography, hairline } from "@/constants/theme";
+import { Colors, Fonts, Radius, Spacing, Typography, cardShadow, hairline } from "@/constants/theme";
+import { useActiveRound } from "@/providers/ActiveRoundProvider";
 import { useAuth } from "@/providers/AuthProvider";
-import { fetchPlayerRounds } from "@/services/db";
+import { deleteMyRound, fetchPlayerRounds } from "@/services/db";
+import { notifySuccess, tapLight } from "@/utils/haptics";
 import {
   computePlayerStats,
   formatPercent,
   formatToPar,
   formatToParDecimal,
+  SCORE_CLASS_COLORS,
   type PlayerStats,
   type RoundSummary,
   type ScoreBucket,
 } from "@/utils/stats";
 
-const BUCKET_COLORS: Record<string, string> = {
-  eagle: "#C7A24A",
-  birdie: "#4E8C6A",
-  par: "#1C3A2B",
-  bogey: "#9BA59C",
-  double: "#B0463B",
-  triple: "#6E2F28",
-};
+// Shared with the round-detail screen so the same score always reads as the
+// same colour everywhere — see utils/stats.ts.
+const BUCKET_COLORS = SCORE_CLASS_COLORS;
 
 export default function StatsScreen() {
   const insets = useSafeAreaInsets();
@@ -44,6 +37,45 @@ export default function StatsScreen() {
     queryKey: ["player-rounds", user?.id],
     queryFn: () => fetchPlayerRounds(user?.id ?? ""),
     enabled: isConfigured && !!user,
+  });
+
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const { clearActiveRound } = useActiveRound();
+
+  const deleteRound = useMutation({
+    mutationFn: (roundId: string) => deleteMyRound(roundId),
+    onSuccess: (result, roundId) => {
+      if (result === "not_found") {
+        Alert.alert("Round not found", "This round is no longer in your history.");
+      } else {
+        notifySuccess();
+        // 'left' is the surprising outcome — the round didn't vanish, it just
+        // isn't yours anymore. 'deleted' is the ordinary case and stays silent.
+        if (result === "left") {
+          Alert.alert(
+            "You left the round",
+            "Your scores were removed. It stays in the other players' history."
+          );
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: ["player-rounds"] });
+      // The detail screen and live leaderboard may still hold this round
+      // cached; a deleted/left round now fails rounds_select_member, so stale
+      // entries would surface as errors instead of just disappearing.
+      queryClient.removeQueries({ queryKey: ["round-detail", roundId] });
+      queryClient.removeQueries({ queryKey: ["round", roundId] });
+      queryClient.removeQueries({ queryKey: ["leaderboard", roundId] });
+      // A paused multiplayer round can be in history and the "in progress"
+      // banner at once — clear it so Resume doesn't point at a dead round.
+      clearActiveRound(roundId);
+    },
+    onError: () => {
+      Alert.alert(
+        "Couldn't remove the round",
+        "It's still in your history. Check your connection and try again."
+      );
+    },
   });
 
   const stats = useMemo<PlayerStats | null>(
@@ -81,14 +113,26 @@ export default function StatsScreen() {
         ) : !stats || stats.holesPlayed === 0 ? (
           <EmptyState />
         ) : (
-          <StatsBody stats={stats} />
+          <StatsBody
+            stats={stats}
+            onOpenRound={(roundId) => router.push(`/history/${roundId}`)}
+            onDeleteRound={(round) => deleteRound.mutate(round.id)}
+          />
         )}
       </ScrollView>
     </View>
   );
 }
 
-function StatsBody({ stats }: { stats: PlayerStats }) {
+function StatsBody({
+  stats,
+  onOpenRound,
+  onDeleteRound,
+}: {
+  stats: PlayerStats;
+  onOpenRound: (roundId: string) => void;
+  onDeleteRound: (round: RoundSummary) => void;
+}) {
   return (
     <View style={styles.body}>
       <HeroCard stats={stats} />
@@ -115,7 +159,7 @@ function StatsBody({ stats }: { stats: PlayerStats }) {
       <DistributionCard buckets={stats.buckets} total={stats.holesPlayed} />
       <ParTypeCard stats={stats} />
       {stats.best ? <BestRoundCard round={stats.best} /> : null}
-      <RoundLog rounds={stats.rounds} />
+      <RoundLog rounds={stats.rounds} onOpen={onOpenRound} onDelete={onDeleteRound} />
     </View>
   );
 }
@@ -295,46 +339,125 @@ function BestRoundCard({ round }: { round: RoundSummary }) {
   );
 }
 
-function RoundLog({ rounds }: { rounds: RoundSummary[] }) {
+function RoundLog({
+  rounds,
+  onOpen,
+  onDelete,
+}: {
+  rounds: RoundSummary[];
+  onOpen: (roundId: string) => void;
+  onDelete: (round: RoundSummary) => void;
+}) {
   return (
     <View style={styles.logSection}>
       <Text style={styles.sectionLabel}>Round history</Text>
-      <TeeCard padded={false} style={styles.logCard}>
-        {rounds.map((round, index) => (
-          <View key={round.id}>
-            {index > 0 ? <View style={styles.logDivider} /> : null}
-            <View style={styles.logRow}>
-              <View style={styles.logLeft}>
-                <Text style={styles.logName} numberOfLines={1}>
-                  {round.courseName}
-                </Text>
-                <Text style={styles.logMeta}>
-                  {formatDate(round.date)} · {round.holesPlayed} holes
-                </Text>
-              </View>
-              <View style={styles.logRight}>
-                <Text style={styles.logStrokes}>{round.strokes}</Text>
-                <View
-                  style={[
-                    styles.logBadge,
-                    { backgroundColor: round.toPar <= 0 ? Colors.accentSoft : Colors.dangerSoft },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.logBadgeText,
-                      { color: round.toPar <= 0 ? Colors.accent : Colors.danger },
-                    ]}
-                  >
-                    {formatToPar(round.toPar)}
-                  </Text>
-                </View>
-              </View>
+      <Text style={styles.logHint}>Swipe a round to remove it, or hold to open the same menu.</Text>
+      {/* TeeCard bakes cardShadow onto the same view we need `overflow: hidden`
+          on (to clip the swipe action) — on iOS that sets clipsToBounds,
+          which clips the shadow too. An outer view carries the shadow instead;
+          TeeCard's own shadow is still there underneath but invisible, clipped
+          by its own overflow. See TeeCard.tsx (not modified — it's shared). */}
+      <View style={styles.logCardShadow}>
+        <TeeCard padded={false} style={styles.logCard}>
+          {rounds.map((round, index) => (
+            <View key={round.id}>
+              {index > 0 ? <View style={styles.logDivider} /> : null}
+              <RoundRow round={round} onOpen={() => onOpen(round.id)} onDelete={() => onDelete(round)} />
             </View>
-          </View>
-        ))}
-      </TeeCard>
+          ))}
+        </TeeCard>
+      </View>
     </View>
+  );
+}
+
+function RoundRow({
+  round,
+  onOpen,
+  onDelete,
+}: {
+  round: RoundSummary;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const swipeRef = useRef<Swipeable>(null);
+  const verb = round.isMultiplayer ? "Leave" : "Delete";
+
+  // Swiping is invisible to VoiceOver, so a destructive action that exists only
+  // in the swipe is unreachable for some golfers. Long-press opens the same
+  // confirmation, and the detail screen carries the action too.
+  const confirm = (): void => {
+    swipeRef.current?.close();
+    Alert.alert(
+      round.isMultiplayer ? "Leave this round?" : "Delete this round?",
+      round.isMultiplayer
+        ? "Your scores will be erased and it will disappear from your statistics. If other players are in it, the round stays for them."
+        : "Your scores for all holes will be erased and it will disappear from your statistics. This can't be undone.",
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: verb, style: "destructive", onPress: onDelete },
+      ]
+    );
+  };
+
+  return (
+    <Swipeable
+      ref={swipeRef}
+      friction={2}
+      rightThreshold={40}
+      overshootRight={false}
+      renderRightActions={() => (
+        <Pressable
+          style={styles.swipeAction}
+          onPress={confirm}
+          accessibilityRole="button"
+          accessibilityLabel={`${verb} this round`}
+        >
+          <Trash2 size={19} color={Colors.onAccent} strokeWidth={2.4} />
+          <Text style={styles.swipeActionText}>{verb}</Text>
+        </Pressable>
+      )}
+    >
+      <Pressable
+        style={styles.logRow}
+        onPress={() => {
+          tapLight();
+          onOpen();
+        }}
+        onLongPress={confirm}
+        delayLongPress={400}
+        accessibilityRole="button"
+        accessibilityLabel={`${round.courseName}, ${formatDate(round.date)}, ${round.strokes} strokes`}
+        accessibilityHint={`Opens the round hole by hole. Double tap and hold to ${verb.toLowerCase()} it.`}
+      >
+        <View style={styles.logLeft}>
+          <Text style={styles.logName} numberOfLines={1}>
+            {round.courseName}
+          </Text>
+          <Text style={styles.logMeta}>
+            {formatDate(round.date)} · {round.holesPlayed} holes
+          </Text>
+        </View>
+        <View style={styles.logRight}>
+          <Text style={styles.logStrokes}>{round.strokes}</Text>
+          <View
+            style={[
+              styles.logBadge,
+              { backgroundColor: round.toPar <= 0 ? Colors.accentSoft : Colors.dangerSoft },
+            ]}
+          >
+            <Text
+              style={[
+                styles.logBadgeText,
+                { color: round.toPar <= 0 ? Colors.accent : Colors.danger },
+              ]}
+            >
+              {formatToPar(round.toPar)}
+            </Text>
+          </View>
+        </View>
+      </Pressable>
+    </Swipeable>
   );
 }
 
@@ -540,14 +663,23 @@ const styles = StyleSheet.create({
   // Round log
   logSection: { gap: Spacing.md },
   sectionLabel: { ...Typography.overline, marginLeft: 2 },
-  logCard: { paddingHorizontal: Spacing.lg },
-  logDivider: { height: 1, backgroundColor: Colors.border },
+  logHint: { ...Typography.subhead, color: Colors.textTertiary, marginLeft: 2, marginTop: -6 },
+  // Shadow lives here, on an unclipped wrapper — see the comment at its usage.
+  logCardShadow: { borderRadius: Radius.lg, ...cardShadow },
+  // overflow hidden so the red action is clipped by the card's rounded corners
+  logCard: { paddingHorizontal: 0, overflow: "hidden" },
+  // Inset to match logRow's own horizontal padding — the divider is a sibling
+  // of the row, not inside it, so it doesn't inherit that padding automatically.
+  logDivider: { height: 1, backgroundColor: Colors.border, marginHorizontal: Spacing.lg },
   logRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.lg,
     gap: Spacing.md,
+    // opaque, so the row slides over the action instead of showing through it
+    backgroundColor: Colors.surface,
   },
   logLeft: { flex: 1, gap: 2 },
   logName: { ...Typography.callout, fontWeight: "600" },
@@ -562,6 +694,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   logBadgeText: { ...Typography.caption, fontWeight: "700" },
+  swipeAction: {
+    width: 92,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    backgroundColor: Colors.danger,
+  },
+  swipeActionText: { ...Typography.caption, color: Colors.onAccent, fontWeight: "700" },
 
   // Empty
   emptyTitle: { ...Typography.title, fontSize: 22, marginTop: Spacing.lg },

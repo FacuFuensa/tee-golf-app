@@ -1,0 +1,179 @@
+name: Watch target compile check
+
+# Unsigned compile-only check for the Apple Watch target (expo/targets/watch).
+# The point: turn "does my Swift compile" into a ~4 minute unsigned run
+# instead of a ~20 minute signed EAS Build round trip. This workflow never
+# signs anything, never touches the main iOS app's build, and never uploads
+# anywhere — it only proves the watch target's Swift builds against a real
+# watchOS SDK.
+#
+# `expo prebuild -p ios` cannot run on the developer's Windows machine (see
+# .superpowers/sdd/watch-m1-report.md) — this workflow is also the only place
+# the generated Xcode project can be inspected at all, not just a nice-to-have
+# speedup.
+#
+# Not triggered automatically on every push — only workflow_dispatch (manual)
+# or pushes that touch the watch target/plugin config, so it doesn't burn CI
+# minutes on unrelated app changes. The developer decides when it runs.
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - "expo/targets/watch/**"
+      - "expo/app.json"
+      - "expo/package.json"
+      - "expo/package-lock.json"
+      - ".github/workflows/watch-compile.yml"
+
+jobs:
+  compile:
+    # macos-26 ships Xcode 26 / watchOS 26 simulator runtimes. Building
+    # against the newest bundled runtime is what exercises the Swift
+    # compiler; the target's own WATCHOS_DEPLOYMENT_TARGET (11.0, set in
+    # expo/targets/watch/expo-target.config.js) is a separate, older floor
+    # for which real watches can install the app — it doesn't need to match
+    # the simulator runtime used here.
+    runs-on: macos-26
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: expo/package-lock.json
+
+      - name: Install JS dependencies
+        working-directory: expo
+        run: npm ci
+
+      - name: Prebuild the iOS project (no CocoaPods, no signing)
+        working-directory: expo
+        run: npx expo prebuild -p ios --no-install
+
+      - name: Report the watch target's icon state
+        working-directory: expo
+        run: |
+          # Diagnostic, and permanent. The watch app's icon is validated
+          # SERVER-SIDE at upload — a missing one costs a full build plus an
+          # App Store Connect rejection to discover. This shows, in about a
+          # second, whether the plugin actually produced an asset catalog.
+          echo "--- targets/watch (source) ---"
+          ls -la targets/watch/ || true
+          echo
+          # The plugin does NOT copy the watch's files into ios/ — it leaves
+          # them in targets/watch/ and references that folder from the Xcode
+          # project. So this is where the generated asset catalog lives.
+          echo "--- everything the plugin generated under targets/watch ---"
+          find targets/watch -type f | sort || true
+          echo
+          echo "--- the asset catalog's contents ---"
+          find targets/watch -name 'Contents.json' -print -exec cat {} \; || true
+          echo
+          echo "--- generated watch Info.plist ---"
+          cat targets/watch/Info.plist 2>/dev/null || echo "(none)"
+          echo
+          echo "--- ASSETCATALOG_COMPILER_APPICON_NAME in the project ---"
+          grep -n "ASSETCATALOG_COMPILER_APPICON_NAME" ios/*.xcodeproj/project.pbxproj | head -10 || true
+
+      - name: Resolve the watch target and project
+        id: scheme
+        working-directory: expo/ios
+        run: |
+          set -euo pipefail
+          PROJECT=$(ls -d *.xcodeproj | head -1)
+          echo "Project: $PROJECT"
+          TARGET=$(xcodebuild -list -json -project "$PROJECT" | node -e '
+            const data = JSON.parse(require("fs").readFileSync(0, "utf8"));
+            const targets = (data.project && data.project.targets) || [];
+            const match = targets.find((t) => /watch/i.test(t));
+            if (!match) {
+              console.error("No watch target found among: " + JSON.stringify(targets));
+              process.exit(1);
+            }
+            console.log(match);
+          ')
+          echo "Resolved watch target: $TARGET"
+          echo "name=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
+
+      - name: Check the watch app is embedded in the iOS app, and only once
+        working-directory: expo/ios
+        run: |
+          set -euo pipefail
+          PBX="${{ steps.scheme.outputs.project }}/project.pbxproj"
+          WATCH_TARGET="${{ steps.scheme.outputs.name }}"
+
+          # These two assertions exist because neither can be checked from a
+          # Windows machine — `expo prebuild` is hard-blocked there by the Expo
+          # CLI's own platform guard, so the generated Xcode project is only
+          # ever visible from a macOS runner or a full EAS build.
+          #
+          # 1. A watch app ships INSIDE the iOS app bundle. Without an embed
+          #    phase the build still succeeds and the .ipa simply has no watch
+          #    app in it — App Store Connect accepts it and the watch never
+          #    appears in TestFlight, with nothing anywhere saying why.
+          if ! grep -q "Embed Watch Content" "$PBX"; then
+            echo "FAIL: no 'Embed Watch Content' build phase in $PBX"
+            echo "The watch app would not ship inside the iOS app."
+            exit 1
+          fi
+          echo "OK: 'Embed Watch Content' phase present"
+
+          # 2. @bacons/apple-targets < 4.0.6 made the watch target embed
+          #    ITSELF, which recurses. Fixed upstream in Feb 2026, but this
+          #    project pins the plugin, and a future bump could regress it.
+          WATCH_UUID=$(node -e '
+            const fs = require("fs");
+            const pbx = fs.readFileSync(process.argv[1], "utf8");
+            const name = process.argv[2];
+            const re = new RegExp("([0-9A-F]{24}) /\\\\* " + name.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&") + " \\\\*/ = \\\\{\\\\s*isa = PBXNativeTarget", "m");
+            const m = pbx.match(re);
+            console.log(m ? m[1] : "");
+          ' "$PBX" "$WATCH_TARGET")
+
+          if [ -z "$WATCH_UUID" ]; then
+            echo "WARN: could not resolve the watch target's UUID; skipping the self-embed check"
+          else
+            SELF=$(awk -v uuid="$WATCH_UUID" '
+              $0 ~ uuid" /\\* "  { inTarget = 1 }
+              inTarget && /Embed Watch Content/ { found = 1 }
+              inTarget && /^\t\t\};/ { inTarget = 0 }
+              END { print found + 0 }
+            ' "$PBX")
+            if [ "$SELF" = "1" ]; then
+              echo "FAIL: the watch target embeds itself — the 4.0.6 recursion bug is back"
+              exit 1
+            fi
+            echo "OK: the watch target does not embed itself"
+          fi
+
+      - name: Build the watch target (unsigned)
+        working-directory: expo/ios
+        run: |
+          # `generic/platform=` compiles for the platform without resolving a
+          # concrete device. Naming one is not just unnecessary here, it is
+          # actively wrong: the runner ships the same watch model against
+          # several runtimes (Series 11 46mm on watchOS 26.2 AND 26.5), so
+          # `name=...,OS=latest` matches more than one device and xcodebuild
+          # refuses to guess — "multiple devices matched the request". The
+          # generic destination is also immune to the next image bump renaming
+          # or re-versioning whatever we happened to pick.
+          #
+          # `-target`, not `-scheme`. The watch scheme pulls the main app in as
+          # a dependency, and the main app needs CocoaPods — which this workflow
+          # deliberately skips (`--no-install`) to stay fast. Building by target
+          # compiles the watch's own Swift and nothing else, which is exactly
+          # the question this check exists to answer. Whether the whole app
+          # assembles and embeds correctly is EAS's job, and it has to run there
+          # anyway because only a signed build can prove the embed.
+          xcodebuild build \
+            -project "${{ steps.scheme.outputs.project }}" \
+            -target "${{ steps.scheme.outputs.name }}" \
+            -destination 'generic/platform=watchOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO

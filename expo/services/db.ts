@@ -36,22 +36,65 @@ export async function createProfile(
 /** Courses + holes ------------------------------------------------------- */
 
 /**
+ * Centroid of every pinned green in `points`, or null when none are pinned.
+ * Unpinned holes are dropped rather than treated as (0, 0), so a
+ * partially-mapped course still anchors on its real greens.
+ */
+function centroidOfGreens(
+  points: { lat: number | null; lng: number | null }[]
+): { latitude: number; longitude: number } | null {
+  const pinned = points.filter(
+    (p): p is { lat: number; lng: number } => p.lat != null && p.lng != null
+  );
+  if (pinned.length === 0) return null;
+  return {
+    latitude: pinned.reduce((sum, p) => sum + p.lat, 0) / pinned.length,
+    longitude: pinned.reduce((sum, p) => sum + p.lng, 0) / pinned.length,
+  };
+}
+
+/**
+ * A saved course plus a fallback location for when `latitude`/`longitude` is
+ * null — every catalog import (GolfCourseAPI supplies no coordinates, and
+ * forward-geocoding can fail) and every hand-mapped course saved before this
+ * fix landed. `greenCentroid` is populated far more often, since a course is
+ * barely playable until at least one green is pinned.
+ */
+export interface CourseWithGreenCentroid extends Course {
+  greenCentroid: { latitude: number; longitude: number } | null;
+}
+
+/**
  * The courses the given golfer has saved to their own library. Courses live in
  * a shared catalog, but each golfer picks which ones appear in their list via
  * the `user_courses` membership table — so two accounts can independently save
  * the same shared course, and one account's list never leaks into another's.
+ *
+ * Holes are embedded (rather than fetched separately) to compute each course's
+ * green centroid in the same round trip — see `CourseWithGreenCentroid`.
  */
-export async function fetchCourses(userId: string): Promise<Course[]> {
+export async function fetchCourses(userId: string): Promise<CourseWithGreenCentroid[]> {
   const { data, error } = await supabase
     .from("user_courses")
-    .select("created_at, course:courses(*)")
+    .select("created_at, course:courses(*, holes(number, green_lat, green_lng))")
     .eq("profile_id", userId)
     .order("created_at", { ascending: false });
   if (error) throw error;
-  const rows = (data as unknown as { course: Course | Course[] | null }[] | null) ?? [];
+
+  type HoleGreen = { number: number; green_lat: number | null; green_lng: number | null };
+  type CourseRow = Course & { holes: HoleGreen[] | null };
+  const rows = (data as unknown as { course: CourseRow | CourseRow[] | null }[] | null) ?? [];
+
   return rows
     .map((r) => (Array.isArray(r.course) ? r.course[0] ?? null : r.course))
-    .filter((c): c is Course => c != null);
+    .filter((c): c is CourseRow => c != null)
+    .map((c): CourseWithGreenCentroid => {
+      const { holes, ...course } = c;
+      const greenCentroid = centroidOfGreens(
+        (holes ?? []).map((h) => ({ lat: h.green_lat, lng: h.green_lng }))
+      );
+      return { ...course, greenCentroid };
+    });
 }
 
 /** Add a (shared) course to the golfer's own library. Idempotent. */
@@ -135,6 +178,14 @@ export interface NewCourseInput {
 export async function createCourseWithHoles(
   input: NewCourseInput
 ): Promise<Course> {
+  // Unlike a catalog import, every green is placed before this is ever called
+  // (app/course/new.tsx walks the golfer through pinning each hole), so a real
+  // location is available immediately — no need to wait on geocoding or fall
+  // back to the green centroid at read time the way `fetchCourses` does.
+  const anchor = centroidOfGreens(
+    input.holes.map((h) => ({ lat: h.green_lat, lng: h.green_lng }))
+  );
+
   const { data: course, error } = await supabase
     .from("courses")
     .insert({
@@ -143,6 +194,8 @@ export async function createCourseWithHoles(
       country: input.country,
       created_by: input.createdBy,
       source: "user",
+      latitude: anchor?.latitude ?? null,
+      longitude: anchor?.longitude ?? null,
     })
     .select()
     .single();
@@ -312,6 +365,10 @@ export async function createSoloRound(
     is_multiplayer: false,
     started_at: startedAt,
     finished_at: null,
+    // Column default (never surfaced anywhere: nearby_open_rounds only ever
+    // looks at is_multiplayer = true rounds), kept here just so this object
+    // matches the real row shape.
+    is_discoverable: true,
   };
 }
 
@@ -325,10 +382,19 @@ function makeJoinCode(): string {
   return code;
 }
 
-/** Host a group round: generates a shareable join code and seats the host. */
+/**
+ * Host a group round: generates a shareable join code and seats the host.
+ * `discoverable` sets the round's `is_discoverable` flag from the golfer's
+ * Settings preference (default on) at the moment the round is created — the
+ * column itself defaults to true too, but that default only covers "the
+ * client didn't say"; a golfer who turned the preference off must get a
+ * private round from the first insert, not a discoverable one that's flipped
+ * off a moment later (a race a second, faster device could win).
+ */
 export async function createMultiplayerRound(
   courseId: string,
-  ownerId: string
+  ownerId: string,
+  discoverable: boolean
 ): Promise<Round> {
   const id = Crypto.randomUUID();
   const startedAt = new Date().toISOString();
@@ -342,6 +408,7 @@ export async function createMultiplayerRound(
     is_multiplayer: true,
     join_code: joinCode,
     started_at: startedAt,
+    is_discoverable: discoverable,
   });
   if (error) throw error;
 
@@ -359,7 +426,28 @@ export async function createMultiplayerRound(
     is_multiplayer: true,
     started_at: startedAt,
     finished_at: null,
+    is_discoverable: discoverable,
   };
+}
+
+/**
+ * Flip a live round's discoverability (Settings → the host's own switch, or
+ * the toggle next to the join code while hosting). Owner-only, and no RPC is
+ * needed to enforce that: `rounds_update_owner` (0001) is
+ * `using (owner_id = auth.uid()) with check (owner_id = auth.uid())`, and
+ * 0010's column-level grants only ever narrowed `holes`, never `rounds` — see
+ * migration 0014's own header comment for why a plain update is sufficient
+ * here. A non-owner's update simply matches zero rows under RLS.
+ */
+export async function setRoundDiscoverable(
+  roundId: string,
+  discoverable: boolean
+): Promise<void> {
+  const { error } = await supabase
+    .from("rounds")
+    .update({ is_discoverable: discoverable })
+    .eq("id", roundId);
+  if (error) throw error;
 }
 
 /**
@@ -381,6 +469,105 @@ export async function joinRoundByCode(
     roundId: (row as { round_id: string }).round_id,
     courseId: (row as { course_id: string }).course_id,
   };
+}
+
+/** Nearby round discovery + join (migration 0014) --------------------------- */
+
+/** One open group round at a nearby course, as returned by `nearby_open_rounds`. */
+export interface NearbyRound {
+  roundId: string;
+  courseId: string;
+  courseName: string;
+  hostDisplayName: string;
+  format: string;
+  startedAt: string;
+  distanceMeters: number;
+}
+
+interface NearbyOpenRoundRow {
+  round_id: string;
+  course_id: string;
+  course_name: string;
+  host_display_name: string;
+  format: string;
+  started_at: string;
+  distance_meters: number;
+}
+
+/**
+ * Open group rounds at courses within `radiusMeters` of (lat, lng), nearest
+ * first. Never includes the caller's own round or one they're already seated
+ * in (the RPC filters both). No coordinates of any kind come back — see
+ * migration 0014's own comment on why the return shape is deliberately thin.
+ */
+export async function fetchNearbyOpenRounds(
+  lat: number,
+  lng: number,
+  radiusMeters: number
+): Promise<NearbyRound[]> {
+  const { data, error } = await supabase.rpc("nearby_open_rounds", {
+    p_lat: lat,
+    p_lng: lng,
+    p_radius_meters: radiusMeters,
+  });
+  if (error) throw error;
+  const rows = (data as NearbyOpenRoundRow[] | null) ?? [];
+  return rows.map((row) => ({
+    roundId: row.round_id,
+    courseId: row.course_id,
+    courseName: row.course_name,
+    hostDisplayName: row.host_display_name,
+    format: row.format,
+    startedAt: row.started_at,
+    distanceMeters: row.distance_meters,
+  }));
+}
+
+export type JoinNearbyRoundStatus = "joined" | "unavailable";
+
+export interface JoinNearbyRoundResult {
+  roundId: string;
+  courseId: string | null;
+  status: JoinNearbyRoundStatus;
+}
+
+interface JoinNearbyRoundRow {
+  round_id: string;
+  course_id: string | null;
+  status: JoinNearbyRoundStatus;
+}
+
+/**
+ * Join a round surfaced by `fetchNearbyOpenRounds`. Unlike `joinRoundByCode`,
+ * this never returns null and never throws for "the round moved on" — the
+ * RPC's contract (see migration 0014) is that it ALWAYS returns exactly one
+ * row, with `status` either 'joined' or 'unavailable'. That is deliberate:
+ * this codebase has shipped three bugs where a write touched zero rows,
+ * raised nothing, and the app reported success anyway (see `finishRound`'s
+ * and `deleteMyRound`'s own doc comments). Callers MUST branch on `status`
+ * and must never treat a resolved promise alone as "joined".
+ */
+export async function joinNearbyRound(
+  roundId: string,
+  lat: number,
+  lng: number,
+  radiusMeters: number
+): Promise<JoinNearbyRoundResult> {
+  const { data, error } = await supabase.rpc("join_nearby_round", {
+    p_round_id: roundId,
+    p_lat: lat,
+    p_lng: lng,
+    p_radius_meters: radiusMeters,
+  });
+  if (error) throw error;
+  const row = Array.isArray(data) ? data[0] : data;
+  // The RPC's contract guarantees a row; this is defensive only (a network
+  // layer or Postgres client bug returning nothing regardless), and mapped to
+  // 'unavailable' rather than throwing so a caller's status switch stays the
+  // one place that decides what the golfer sees.
+  if (!row) return { roundId, courseId: null, status: "unavailable" };
+  const typed = row as JoinNearbyRoundRow;
+  return { roundId: typed.round_id, courseId: typed.course_id, status: typed.status };
 }
 
 export interface RoundBundle {
@@ -436,12 +623,50 @@ export async function upsertScore(input: UpsertScoreInput): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * Thrown when the update in `finishRound` didn't land exactly one row — either
+ * because the caller isn't the round's owner, or because the round no longer
+ * exists.
+ */
+export class NotRoundOwnerError extends Error {
+  constructor() {
+    super("Only the round's host can finish it — or the round no longer exists.");
+    this.name = "NotRoundOwnerError";
+  }
+}
+
+/**
+ * Close out a round. Owner-only: `rounds_update_owner` gates this to
+ * `owner_id = auth.uid()`.
+ *
+ * The count is not decoration. A non-owner's update matches zero rows and
+ * returns NO error, so `error == null` is not evidence that anything happened —
+ * the app used to treat that silence as success and tell a joiner their group
+ * round was finished while it stayed live for everyone else. `count` is asked
+ * for instead of `select()` because the `rounds` SELECT policy resolves
+ * membership through a SECURITY DEFINER function, and asking for the row back
+ * is the pattern that breaks elsewhere in this file.
+ *
+ * The assertion is on `count !== 1`, not `count === 0`. supabase-js only sets
+ * `count` when the response carries BOTH the `Prefer: count=…` header we send
+ * AND a parseable `content-range` header back — otherwise it stays `null`. And
+ * a wildcard Content-Range header (both the range and the total as literal
+ * asterisks, meaning "unknown") parses via `parseInt` to `NaN`. Neither `null`
+ * nor `NaN` is `=== 0`, so a guard written as `count === 0` fails to fire on
+ * exactly the inputs it exists to catch, silently reporting success again.
+ * The filter is `.eq("id", roundId)` on a primary key, so at most one row can
+ * ever match — asserting the single success value (`1`) is airtight where
+ * asserting the failure value (`0`) is not. Re-finishing an already-finished
+ * round still updates one row (Postgres counts rows matched by the UPDATE
+ * regardless of whether any column value changed), so this stays idempotent.
+ */
 export async function finishRound(roundId: string): Promise<void> {
-  const { error } = await supabase
+  const { error, count } = await supabase
     .from("rounds")
-    .update({ finished_at: new Date().toISOString() })
+    .update({ finished_at: new Date().toISOString() }, { count: "exact" })
     .eq("id", roundId);
   if (error) throw error;
+  if (count !== 1) throw new NotRoundOwnerError();
 }
 
 /** Live leaderboard ------------------------------------------------------ */
@@ -538,6 +763,21 @@ export async function deleteMyData(): Promise<void> {
 export async function deleteMyAccount(): Promise<void> {
   const { error } = await supabase.rpc("delete_my_account");
   if (error) throw error;
+}
+
+export type DeleteRoundResult = "deleted" | "left" | "not_found";
+
+/**
+ * Remove one round from the caller's history. In a group round where other
+ * players are still seated this removes only the caller ("left"); otherwise the
+ * round itself is deleted ("deleted"). See migration 0013 for why this is a
+ * function rather than a plain delete.
+ */
+export async function deleteMyRound(roundId: string): Promise<DeleteRoundResult> {
+  const { data, error } = await supabase.rpc("delete_my_round", { p_round_id: roundId });
+  if (error) throw error;
+  const value = Array.isArray(data) ? data[0] : data;
+  return (value as DeleteRoundResult) ?? "not_found";
 }
 
 /** Club bag (Smart Caddy) ------------------------------------------------ */
@@ -690,4 +930,33 @@ export async function fetchPlayerRounds(profileId: string): Promise<PlayedRound[
       new Date(b.round.started_at).getTime() - new Date(a.round.started_at).getTime()
   );
   return result;
+}
+
+/**
+ * The golfer's lowest score on each hole of one course, keyed by hole_id.
+ * Excludes the round in progress, so "your best" never means "what you just
+ * wrote down". Hole ids are course-scoped, so this is the same hole at the
+ * same course across every past round.
+ */
+export async function fetchHoleBests(
+  profileId: string,
+  courseId: string,
+  excludeRoundId: string
+): Promise<Record<string, number>> {
+  const { data, error } = await supabase
+    .from("scores")
+    .select("hole_id, strokes, holes!inner(course_id)")
+    .eq("profile_id", profileId)
+    .eq("holes.course_id", courseId)
+    .neq("round_id", excludeRoundId)
+    .gt("strokes", 0);
+  if (error) throw error;
+
+  const rows = (data as unknown as { hole_id: string; strokes: number }[] | null) ?? [];
+  const best: Record<string, number> = {};
+  for (const row of rows) {
+    const current = best[row.hole_id];
+    if (current == null || row.strokes < current) best[row.hole_id] = row.strokes;
+  }
+  return best;
 }

@@ -4,9 +4,7 @@ import { ChevronLeft, Plus, Sparkles, Trash2, X } from "lucide-react-native";
 import React, { useMemo, useState } from "react";
 import {
   Alert,
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
+  Animated,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -14,17 +12,27 @@ import {
   TextInput,
   View,
 } from "react-native";
+import Svg, { Defs, LinearGradient, Rect, Stop } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { TeeButton } from "@/components/ui/TeeButton";
-import { Colors, Radius, Spacing, Typography, hairline } from "@/constants/theme";
+import { TeeModal } from "@/components/ui/TeeModal";
+import { Colors, Radius, Spacing, Typography, cardShadow, hairline } from "@/constants/theme";
 import { useClubs } from "@/hooks/useClubs";
+import { usePressScale } from "@/hooks/usePressScale";
 import { useAuth } from "@/providers/AuthProvider";
 import { useSettings } from "@/providers/SettingsProvider";
 import { addClub, addClubs, removeClub, updateClub } from "@/services/db";
 import type { Club } from "@/types/models";
 import { metersToUnit, unitShort, unitToMeters } from "@/utils/geo";
 import { notifySuccess, tapLight } from "@/utils/haptics";
+
+/** Height of the floating "Add a club" pill — matches TeeButton's own default. */
+const ISLAND_HEIGHT = 56;
+/** Gap between the pill and the safe-area bottom. */
+const ISLAND_BOTTOM_GAP = Spacing.lg;
+/** Height of the gradient fade above the pill — tall enough to read as a soft vignette, not a hard edge. */
+const SCRIM_HEIGHT = 96;
 
 /** A sensible starter bag, in YARDS — converted to meters on insert. */
 const STANDARD_SET: { name: string; yards: number }[] = [
@@ -104,7 +112,13 @@ export default function BagScreen() {
 
       <ScrollView
         style={styles.scroll}
-        contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 120 }]}
+        contentContainerStyle={[
+          styles.content,
+          // Enough clearance for the last row to scroll clear of the floating
+          // pill (its own height + the gap to the safe area) plus a buffer so
+          // it doesn't feel cramped right underneath it.
+          { paddingBottom: insets.bottom + ISLAND_BOTTOM_GAP + ISLAND_HEIGHT + Spacing.xl },
+        ]}
         showsVerticalScrollIndicator={false}
       >
         <Text style={styles.intro}>
@@ -166,13 +180,42 @@ export default function BagScreen() {
       </ScrollView>
 
       {clubs.length > 0 ? (
-        <View style={[styles.footer, { paddingBottom: insets.bottom + Spacing.md }]}>
-          <TeeButton
-            label="Add a club"
-            onPress={() => setEditing("new")}
-            icon={<Plus size={18} color={Colors.onPrimary} strokeWidth={2.6} />}
-          />
-        </View>
+        <>
+          {/* The blur/gradient substitute: expo-blur and expo-linear-gradient
+              were both removed for App Store size, so this is a plain SVG
+              rect painted with a transparent-to-Colors.background gradient.
+              On the flat cream background it reads the same as a blur, at
+              effectively no cost. Non-interactive — the list still scrolls
+              and is tappable straight through it. */}
+          <View
+            pointerEvents="none"
+            style={[styles.scrim, { height: SCRIM_HEIGHT + insets.bottom }]}
+          >
+            {/* width/height props (not just absoluteFill's positioning) are
+                required here: react-native-svg's web target renders a plain
+                DOM <svg>, which — unlike a View — is a CSS "replaced element"
+                and falls back to a fixed intrinsic 300x150 box when its own
+                width/height are left unset, even with all four inset edges
+                pinned to 0. Percentages on the SVG itself sidestep that. */}
+            <Svg width="100%" height="100%" style={StyleSheet.absoluteFill}>
+              <Defs>
+                <LinearGradient id="bagListFade" x1="0" y1="0" x2="0" y2="1">
+                  <Stop offset="0" stopColor={Colors.background} stopOpacity={0} />
+                  <Stop offset="1" stopColor={Colors.background} stopOpacity={1} />
+                </LinearGradient>
+              </Defs>
+              <Rect x="0" y="0" width="100%" height="100%" fill="url(#bagListFade)" />
+            </Svg>
+          </View>
+          <View style={[styles.island, { bottom: insets.bottom + ISLAND_BOTTOM_GAP }]}>
+            <TeeButton
+              label="Add a club"
+              onPress={() => setEditing("new")}
+              icon={<Plus size={18} color={Colors.onPrimary} strokeWidth={2.6} />}
+              style={styles.islandButton}
+            />
+          </View>
+        </>
       ) : null}
 
       <ClubEditor
@@ -202,9 +245,9 @@ function ClubEditor({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const insets = useSafeAreaInsets();
   const visible = target !== null;
   const existing = target !== null && target !== "new" ? target : null;
+  const closeAnim = usePressScale();
 
   const initialName = existing?.name ?? "";
   const initialCarry =
@@ -245,53 +288,51 @@ function ClubEditor({
   const valid = name.trim().length > 0 && Number.isFinite(carryValue) && carryValue > 0;
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <Pressable style={styles.editorBackdrop} onPress={onClose} />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        style={styles.editorWrap}
-        pointerEvents="box-none"
-      >
-        <View style={[styles.editorCard, { marginBottom: insets.bottom + Spacing.lg }]}>
-          <View style={styles.editorHead}>
-            <Text style={styles.editorTitle}>{existing ? "Edit club" : "Add club"}</Text>
-            <Pressable style={styles.editorClose} onPress={onClose} hitSlop={8}>
-              <X size={20} color={Colors.primary} strokeWidth={2.4} />
-            </Pressable>
-          </View>
+    <TeeModal visible={visible} onClose={onClose}>
+      <View style={styles.editorHead}>
+        <Text style={styles.editorTitle}>{existing ? "Edit club" : "Add club"}</Text>
+        <Pressable
+          onPress={onClose}
+          onPressIn={closeAnim.onPressIn}
+          onPressOut={closeAnim.onPressOut}
+          hitSlop={8}
+        >
+          <Animated.View style={[styles.editorClose, { transform: [{ scale: closeAnim.scale }] }]}>
+            <X size={20} color={Colors.primary} strokeWidth={2.4} />
+          </Animated.View>
+        </Pressable>
+      </View>
 
-          <Text style={styles.fieldLabel}>CLUB</Text>
-          <TextInput
-            style={styles.input}
-            value={name}
-            onChangeText={setName}
-            placeholder="e.g. 7 Iron"
-            placeholderTextColor={Colors.textTertiary}
-            autoCapitalize="words"
-            returnKeyType="next"
-          />
+      <Text style={styles.fieldLabel}>CLUB</Text>
+      <TextInput
+        style={styles.input}
+        value={name}
+        onChangeText={setName}
+        placeholder="e.g. 7 Iron"
+        placeholderTextColor={Colors.textTertiary}
+        autoCapitalize="words"
+        returnKeyType="next"
+      />
 
-          <Text style={styles.fieldLabel}>CARRY ({unitShort(unit)})</Text>
-          <TextInput
-            style={styles.input}
-            value={carry}
-            onChangeText={setCarry}
-            placeholder={unit === "yards" ? "e.g. 150" : "e.g. 137"}
-            placeholderTextColor={Colors.textTertiary}
-            keyboardType="number-pad"
-            returnKeyType="done"
-          />
+      <Text style={styles.fieldLabel}>CARRY ({unitShort(unit)})</Text>
+      <TextInput
+        style={styles.input}
+        value={carry}
+        onChangeText={setCarry}
+        placeholder={unit === "yards" ? "e.g. 150" : "e.g. 137"}
+        placeholderTextColor={Colors.textTertiary}
+        keyboardType="number-pad"
+        returnKeyType="done"
+      />
 
-          <TeeButton
-            label={existing ? "Save changes" : "Add to bag"}
-            loading={save.isPending}
-            disabled={!valid}
-            onPress={() => save.mutate()}
-            style={styles.editorSave}
-          />
-        </View>
-      </KeyboardAvoidingView>
-    </Modal>
+      <TeeButton
+        label={existing ? "Save changes" : "Add to bag"}
+        loading={save.isPending}
+        disabled={!valid}
+        onPress={() => save.mutate()}
+        style={styles.editorSave}
+      />
+    </TeeModal>
   );
 }
 
@@ -347,23 +388,10 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
 
-  footer: {
-    paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.md,
-    backgroundColor: Colors.background,
-    borderTopWidth: hairline,
-    borderTopColor: Colors.border,
-  },
+  scrim: { position: "absolute", left: 0, right: 0, bottom: 0 },
+  island: { position: "absolute", left: Spacing.xl, right: Spacing.xl },
+  islandButton: { borderRadius: Radius.pill, ...cardShadow },
 
-  editorBackdrop: { ...StyleSheet.absoluteFillObject, backgroundColor: Colors.scrim },
-  editorWrap: { flex: 1, justifyContent: "flex-end" },
-  editorCard: {
-    backgroundColor: Colors.background,
-    borderTopLeftRadius: Radius.xl,
-    borderTopRightRadius: Radius.xl,
-    marginHorizontal: 0,
-    padding: Spacing.xl,
-  },
   editorHead: {
     flexDirection: "row",
     alignItems: "center",

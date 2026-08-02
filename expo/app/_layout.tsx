@@ -68,6 +68,7 @@ function RootNav({ ready }: { ready: boolean }) {
       <Stack.Screen name="course/new" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
       <Stack.Screen name="course/browse" options={{ presentation: "modal", animation: "slide_from_bottom" }} />
       <Stack.Screen name="round/[id]" options={{ animation: "slide_from_right" }} />
+      <Stack.Screen name="history/[roundId]" options={{ animation: "slide_from_right" }} />
       <Stack.Screen name="bag" options={{ animation: "slide_from_right" }} />
     </Stack>
   );

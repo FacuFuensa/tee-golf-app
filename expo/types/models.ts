@@ -52,6 +52,12 @@ export interface Round {
   is_multiplayer: boolean;
   started_at: string;
   finished_at: string | null;
+  /**
+   * Lets a golfer at the same course discover and join this round without a
+   * code (migration 0014). DB default is true; only meaningful while the
+   * round is a live, unfinished group round.
+   */
+  is_discoverable: boolean;
 }
 
 export interface RoundPlayer {

@@ -58,3 +58,9 @@ store/.demo-credentials
 # Raw device screenshots. Only the processed 6.9" set is worth versioning —
 # run store/prepare-screenshots.py to produce it.
 store/screenshots/raw/
+
+# `eas credentials` writes these when exporting the signing certificate for CI.
+# credentials.json holds the .p12 password in plain text, and this repo is
+# public — the *.p12 / *.p8 rules above do not cover it.
+credentials.json
+ios/certs/

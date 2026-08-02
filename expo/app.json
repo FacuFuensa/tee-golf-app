@@ -2,21 +2,17 @@
   "expo": {
     "name": "Tee",
     "slug": "tee",
-    "version": "1.0.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "tee",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/images/icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#F2EDE3"
-    },
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.teegolf.app",
       "buildNumber": "1",
+      "appleTeamId": "RS6J29JLPS",
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "Tee uses your location to show live GPS distance to the green of the hole you're playing, and to sort your course list so the course you're standing on is first.",
         "ITSAppUsesNonExemptEncryption": false
@@ -33,7 +29,7 @@
         "NSPrivacyCollectedDataTypes": [
           {
             "NSPrivacyCollectedDataType": "NSPrivacyCollectedDataTypePreciseLocation",
-            "NSPrivacyCollectedDataTypeLinked": false,
+            "NSPrivacyCollectedDataTypeLinked": true,
             "NSPrivacyCollectedDataTypeTracking": false,
             "NSPrivacyCollectedDataTypePurposes": [
               "NSPrivacyCollectedDataTypePurposeAppFunctionality"
@@ -108,7 +104,17 @@
         {
           "locationWhenInUsePermission": "Tee uses your location to show live GPS distance to the green of the hole you're playing, and to sort your course list so the course you're standing on is first."
         }
-      ]
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-mark.png",
+          "imageWidth": 51,
+          "resizeMode": "contain",
+          "backgroundColor": "#F2EDE3"
+        }
+      ],
+      "@bacons/apple-targets"
     ],
     "experiments": {
       "typedRoutes": false
@@ -119,6 +125,12 @@
         "projectId": "05c31e1c-a155-4d65-9a99-065087b50d12"
       }
     },
-    "owner": "facundofuensa"
+    "owner": "facundofuensa",
+    "updates": {
+      "url": "https://u.expo.dev/05c31e1c-a155-4d65-9a99-065087b50d12"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    }
   }
 }

@@ -39,6 +39,8 @@ export interface RoundSummary {
   toPar: number;
   /** Score relative to par projected to a full 18 holes. */
   toParPer18: number;
+  /** Drives the delete confirmation copy: leaving vs deleting. */
+  isMultiplayer: boolean;
 }
 
 export interface PlayerStats {
@@ -70,6 +72,21 @@ const BUCKET_META: { key: ScoreClass; label: string }[] = [
   { key: "triple", label: "Triple+" },
 ];
 
+/**
+ * One swatch per `ScoreClass`, shared by the Stats distribution chart and the
+ * round-detail hole list so the same score always reads as the same colour
+ * everywhere in the app. Colocated with `ScoreClass` itself rather than in a
+ * theme file, since this file already owns the type and its labels.
+ */
+export const SCORE_CLASS_COLORS: Record<ScoreClass, string> = {
+  eagle: "#C7A24A",
+  birdie: "#4E8C6A",
+  par: "#1C3A2B",
+  bogey: "#9BA59C",
+  double: "#B0463B",
+  triple: "#6E2F28",
+};
+
 export function classifyHole(hole: PlayedHole): ScoreClass {
   const diff = hole.strokes - hole.par;
   if (diff <= -2) return "eagle";
@@ -95,6 +112,7 @@ function summarize(round: PlayedRound): RoundSummary {
     par,
     toPar,
     toParPer18,
+    isMultiplayer: round.round.is_multiplayer,
   };
 }
 
