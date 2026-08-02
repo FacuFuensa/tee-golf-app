@@ -55,23 +55,26 @@ jobs:
         working-directory: expo
         run: npx expo prebuild -p ios --no-install
 
-      - name: Resolve the watch app scheme
+      - name: Resolve the watch target and project
         id: scheme
         working-directory: expo/ios
         run: |
           set -euo pipefail
-          SCHEME=$(xcodebuild -list -json | node -e '
+          PROJECT=$(ls -d *.xcodeproj | head -1)
+          echo "Project: $PROJECT"
+          TARGET=$(xcodebuild -list -json -project "$PROJECT" | node -e '
             const data = JSON.parse(require("fs").readFileSync(0, "utf8"));
-            const schemes = (data.project && data.project.schemes) || (data.workspace && data.workspace.schemes) || [];
-            const match = schemes.find((s) => /watch/i.test(s));
+            const targets = (data.project && data.project.targets) || [];
+            const match = targets.find((t) => /watch/i.test(t));
             if (!match) {
-              console.error("No watch scheme found among: " + JSON.stringify(schemes));
+              console.error("No watch target found among: " + JSON.stringify(targets));
               process.exit(1);
             }
             console.log(match);
           ')
-          echo "Resolved watch scheme: $SCHEME"
-          echo "name=$SCHEME" >> "$GITHUB_OUTPUT"
+          echo "Resolved watch target: $TARGET"
+          echo "name=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "project=$PROJECT" >> "$GITHUB_OUTPUT"
 
       - name: Build the watch target (unsigned)
         working-directory: expo/ios
@@ -84,8 +87,17 @@ jobs:
           # refuses to guess — "multiple devices matched the request". The
           # generic destination is also immune to the next image bump renaming
           # or re-versioning whatever we happened to pick.
+          #
+          # `-target`, not `-scheme`. The watch scheme pulls the main app in as
+          # a dependency, and the main app needs CocoaPods — which this workflow
+          # deliberately skips (`--no-install`) to stay fast. Building by target
+          # compiles the watch's own Swift and nothing else, which is exactly
+          # the question this check exists to answer. Whether the whole app
+          # assembles and embeds correctly is EAS's job, and it has to run there
+          # anyway because only a signed build can prove the embed.
           xcodebuild build \
-            -scheme "${{ steps.scheme.outputs.name }}" \
+            -project "${{ steps.scheme.outputs.project }}" \
+            -target "${{ steps.scheme.outputs.name }}" \
             -destination 'generic/platform=watchOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
